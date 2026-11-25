@@ -364,11 +364,13 @@ extern "C" [[noreturn]] void kmain() {
         }
     }
     efi::publish_files();
-    // NPU bring-up step A (power up / down), on by default when an NPU is present; npu=off skips it.
+    // NPU bring-up, on by default when an NPU is present: power up, start the
+    // firmware, power down. npu=power stops after the power test, npu=off skips it.
     {
         char npu_opt[8] = "";
         kstr::cmdline_get(cmdline, "npu", npu_opt, sizeof(npu_opt));
-        if (g_npu_index >= 0 && memcmp(npu_opt, "off", 4) != 0) npu::bringup([](const char* l) { kprintf("%s\n", l); });
+        if (g_npu_index >= 0 && memcmp(npu_opt, "off", 4) != 0)
+            npu::bringup([](const char* l) { kprintf("%s\n", l); }, memcmp(npu_opt, "power", 6) != 0);
     }
     fs::put_file("/sys/bootlog.txt", con::log_data(), con::log_size());
     kprintf("FS:    RAM file system, %d entries from initrd (%s)\n", files, size_str(fs::used_bytes(), sz));

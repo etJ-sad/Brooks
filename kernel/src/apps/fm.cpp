@@ -366,8 +366,8 @@ void attach_usb() {
 void npu_log(const char* line) { ui::logbox_add(line); }
 
 void npu_test() {
-    ui::logbox_begin("NPU: включение питания (шаг A)");
-    npu::bringup(npu_log);
+    ui::logbox_begin("NPU: питание и запуск прошивки (шаги A и B)");
+    npu::bringup(npu_log, true);
     ui::logbox_add("Полный лог: /sys/npu/bringup.txt");
     ui::logbox_end();
     for (Panel& p : g_p) reload(p, selected(p));

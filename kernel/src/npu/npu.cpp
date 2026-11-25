@@ -2,17 +2,32 @@
 // Register sequences follow Linux drivers/accel/ivpu (Copyright (C) 2020-2024
 // Intel Corporation, GPL-2.0-only): ivpu_hw_power_up(), ivpu_hw_power_down().
 #include "npu/npu.h"
-#include <stdarg.h>
-#include "arch/x86_64/apic.h"
-#include "arch/x86_64/cpu.h"
 #include "fs/vfs.h"
-#include "lib/kprintf.h"
 #include "lib/string.h"
-#include "mm/vmm.h"
+#include "npu/boot.h"
+#include "npu/hw.h"
 #include "pci/pci.h"
 
 namespace npu {
+
 namespace {
+void (*g_log)(const char*) = nullptr;
+char g_text[24576];
+size_t g_len = 0;
+}  // namespace
+
+void log_line(const char* line) {
+    size_t l = strlen(line);
+    if (g_len + l + 2 < sizeof(g_text)) {
+        memcpy(g_text + g_len, line, l);
+        g_len += l;
+        g_text[g_len++] = '\n';
+    }
+    if (g_log) g_log(line);
+}
+
+namespace {
+using namespace hw;
 
 // ---- buttress (BAR4), MTL generation (Meteor Lake, Arrow Lake)
 constexpr uint32_t BTRS_WP_REQ_PAYLOAD0 = 0x08;  // MIN_RATIO 15:0, MAX_RATIO 31:16
@@ -43,58 +58,7 @@ constexpr uint32_t CPU_SS_TIM_PERF_FREE_CNT = 0x06029000;
 constexpr uint64_t PLL_TIMEOUT_US = 1500 * 1000, TIMEOUT_US = 150 * 1000, PWR_ISLAND_TIMEOUT_US = 5000;
 constexpr uint32_t WP_CONFIG_2_TILE_4_3 = (0x02 << 8) | 0x02;
 
-volatile uint8_t* g_regv = nullptr;  // BAR0 window [0, 0x40000)
-volatile uint8_t* g_tim = nullptr;   // BAR0 page with the free-running timer
-volatile uint8_t* g_regb = nullptr;  // BAR4
 uint8_t g_min = 0, g_max = 0, g_pn = 0;
-
-void (*g_log)(const char*) = nullptr;
-char g_text[12288];
-size_t g_len = 0;
-
-__attribute__((format(printf, 1, 2))) void out(const char* fmt, ...) {
-    char line[200];
-    va_list ap;
-    va_start(ap, fmt);
-    kvsnprintf(line, sizeof(line), fmt, ap);
-    va_end(ap);
-    size_t l = strlen(line);
-    if (g_len + l + 2 < sizeof(g_text)) {
-        memcpy(g_text + g_len, line, l);
-        g_len += l;
-        g_text[g_len++] = '\n';
-    }
-    if (g_log) g_log(line);
-}
-
-uint32_t rb(uint32_t off) { return *reinterpret_cast<volatile uint32_t*>(g_regb + off); }
-void wb(uint32_t off, uint32_t v) { *reinterpret_cast<volatile uint32_t*>(g_regb + off) = v; }
-uint32_t rv(uint32_t off) { return *reinterpret_cast<volatile uint32_t*>(g_regv + off); }
-void wv(uint32_t off, uint32_t v) { *reinterpret_cast<volatile uint32_t*>(g_regv + off) = v; }
-
-void udelay(uint64_t us) {
-    uint64_t hz = apic::tsc_hz();
-    if (!hz) hz = 3000000000ull;
-    uint64_t end = cpu::rdtsc() + hz / 1000000 * us;
-    while (cpu::rdtsc() < end) cpu::pause();
-}
-
-uint32_t fld(uint32_t v, uint32_t mask) { return (v & mask) >> __builtin_ctz(mask); }
-
-// Waits until field `mask` of a register equals `want`.
-bool poll(bool btrs, uint32_t reg, uint32_t mask, uint32_t want, uint64_t timeout_us, const char* what) {
-    uint64_t waited = 0;
-    for (;;) {
-        uint32_t v = btrs ? rb(reg) : rv(reg);
-        if (fld(v, mask) == want) return true;
-        if (waited >= timeout_us) {
-            out("    TIMEOUT: %s (%s+0x%x = 0x%08x, want %u)", what, btrs ? "BTRS" : "IP", reg, v, want);
-            return false;
-        }
-        udelay(50);
-        waited += 50;
-    }
-}
 
 // Handshake check. Linux reads once right after the write; we allow up to
 // 1 ms for the hardware to answer, which costs nothing when it is instant.
@@ -220,7 +184,8 @@ int find_cap(const pci::Device& d, uint8_t id) {
     return -1;
 }
 
-bool run() {
+Result run(bool start_fw) {
+    Result r;
     const pci::Device* dev = nullptr;
     for (int i = 0; i < pci::count(); i++)
         if (pci::intel_npu_name(pci::at(i))) {
@@ -229,13 +194,13 @@ bool run() {
         }
     if (!dev) {
         out("NPU: not on the PCI bus, nothing to do");
-        return false;
+        return r;
     }
-    out("NPU bring-up (step A: power): %s %02x:%02x.%x id %04x:%04x rev %02x", pci::intel_npu_name(*dev), dev->bus,
+    out("NPU bring-up: %s %02x:%02x.%x id %04x:%04x rev %02x", pci::intel_npu_name(*dev), dev->bus,
         dev->dev, dev->fn, dev->vendor, dev->device, dev->rev);
     if (dev->device != 0x7d1d && dev->device != 0xad1d) {
         out("  only Meteor Lake / Arrow Lake (NPU 37xx) is supported so far");
-        return false;
+        return r;
     }
     // PCI power state D0 (the firmware may leave the device in D3hot).
     int pm = find_cap(*dev, 0x01);
@@ -253,18 +218,15 @@ bool run() {
     out("  BAR0 (NPU IP) 0x%lx, BAR4 (buttress) 0x%lx", bar0, bar4);
     if (!bar0 || !bar4) {
         out("  BAR not assigned by the firmware");
-        return false;
+        return r;
     }
-    g_regv = static_cast<volatile uint8_t*>(vmm::map(bar0, 0x40000, vmm::Uncached));
-    g_tim = static_cast<volatile uint8_t*>(vmm::map(bar0 + CPU_SS_TIM_PERF_FREE_CNT, 16, vmm::Uncached));
-    g_regb = static_cast<volatile uint8_t*>(vmm::map(bar4, 0x1000, vmm::Uncached));
-    if (!g_regv || !g_regb || !g_tim) {
+    if (!map_bars(bar0, bar4)) {
         out("  cannot map the BARs");
-        return false;
+        return r;
     }
     if (rb(BTRS_VPU_STATUS) == 0xFFFFFFFFu) {
         out("  buttress reads 0xffffffff: device does not respond");
-        return false;
+        return r;
     }
     uint32_t fmin = rb(BTRS_FMIN_FUSE), fmax = rb(BTRS_FMAX_FUSE);
     g_min = uint8_t(fmin & 0xFF);
@@ -276,31 +238,41 @@ bool run() {
         g_pn * 100u / 3, g_max, g_max * 100u / 3);
     dump("start");
 
-    out("Power up:");
-    bool up = power_up();
-    dump(up ? "powered" : "after failure");
-    if (up) {
+    out("Power up (step A):");
+    r.power_up = power_up();
+    dump(r.power_up ? "powered" : "after failure");
+    if (r.power_up) {
         // The NPU's own free-running timer counts only while the IP is powered.
-        uint64_t t1 = *reinterpret_cast<volatile uint64_t*>(g_tim);
+        uint64_t t1 = rv64(CPU_SS_TIM_PERF_FREE_CNT);
         udelay(1000);
-        uint64_t t2 = *reinterpret_cast<volatile uint64_t*>(g_tim);
+        uint64_t t2 = rv64(CPU_SS_TIM_PERF_FREE_CNT);
         out("  NPU timer: %lu -> %lu (+%lu in 1 ms)%s", t1, t2, t2 - t1, t2 > t1 ? "  NPU IS ALIVE" : "");
     }
+    if (r.power_up && start_fw) {
+        out("Firmware (step B):");
+        boot::Device bd{dev->bus, dev->device, dev->rev, g_min, g_pn, g_max};
+        r.fw_tried = true;
+        r.fw_ready = boot::run(bd);
+    }
     out("Power down:");
-    bool down = power_down();
+    r.power_down = power_down();
     dump("end");
-    out("NPU step A: %s", up && down ? "PASS (power up + down)" : up ? "power up OK, power down FAILED" : "FAILED");
-    return up && down;
+    // The NPU can no longer touch its memory once the IP is reset.
+    if (r.power_down) free_all();
+    else if (allocated_bytes()) out("  keeping %lu KiB of NPU memory allocated (reset not confirmed)", uint64_t(allocated_bytes()) >> 10);
+    out("NPU step A (power): %s", r.power_up && r.power_down ? "PASS" : r.power_up ? "power up OK, power down FAILED" : "FAILED");
+    if (r.fw_tried) out("NPU step B (firmware): %s", r.fw_ready ? "PASS, firmware answered" : "FAILED");
+    return r;
 }
 
 }  // namespace
 
-bool bringup(void (*log)(const char*)) {
+Result bringup(void (*log)(const char*), bool start_fw) {
     g_log = log;
     g_len = 0;
-    bool ok = run();
+    Result r = run(start_fw);
     fs::put_file("/sys/npu/bringup.txt", g_text, g_len);
-    return ok;
+    return r;
 }
 
 }  // namespace npu

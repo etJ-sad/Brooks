@@ -1,15 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// Intel NPU (Meteor Lake / Arrow Lake, NPU 37xx IP with the MTL buttress).
-// Step A of the bring-up: power the NPU up and down the way Linux ivpu does
-// (drivers/accel/ivpu: ivpu_hw.c, ivpu_hw_btrs.c, ivpu_hw_ip.c), logging every
-// register on the way. No firmware is loaded yet.
+// Intel NPU (Meteor Lake / Arrow Lake, NPU 37xx IP with the MTL buttress),
+// brought up the way Linux ivpu does (drivers/accel/ivpu), logging every step:
+//   step A: power up (workpoint, power island, NOC) and down;
+//   step B: NPU MMU, firmware vpu_37xx_v1.bin, boot parameters, start, "ready" message.
 #pragma once
 #include <stddef.h>
 
 namespace npu {
 
-// log() gets one line per step. Returns true if power-up and power-down
-// both completed. Also writes /sys/npu/bringup.txt.
-bool bringup(void (*log)(const char*));
+struct Result {
+    bool power_up = false, power_down = false;
+    bool fw_tried = false, fw_ready = false;
+};
+
+// log() gets one line per step. With start_fw the firmware is started between
+// power up and power down. Also writes /sys/npu/bringup.txt (and the firmware
+// logs /sys/npu/fw-*.txt).
+Result bringup(void (*log)(const char*), bool start_fw);
 
 }  // namespace npu

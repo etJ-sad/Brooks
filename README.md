@@ -13,8 +13,13 @@
   встроенный двухпанельный **файловый менеджер** с просмотрщиком (текст/hex) и редактором.
 - **USB-накопители**: xHCI, USB mass storage (BOT/SCSI), разделы GPT/MBR. Файловые системы:
   FAT32 и exFAT (чтение и запись), NTFS (только чтение).
-- **NPU, шаг A**: включение и выключение питания NPU (Meteor/Arrow Lake, 37xx) по последовательности Linux `ivpu`,
-  с подробным логом (`/sys/npu/bringup.txt`, в менеджере `0` → `N`). Прошивка NPU ещё не загружается.
+- **NPU, шаги A и B** (Meteor/Arrow Lake, 37xx, порт Linux `ivpu`): включение питания, MMU самого NPU
+  (свои таблицы страниц), загрузка прошивки Intel `vpu_37xx_v1.bin`, параметры загрузки, старт процессора NPU
+  и ожидание его ответа `BOOT`; затем выключение. Подробный лог: `/sys/npu/bringup.txt`, логи самой прошивки:
+  `/sys/npu/fw-verbose.txt`, `/sys/npu/fw-critical.txt`; в менеджере `0` → `N`.
+  Прошивка берётся из linux-firmware при сборке (`scripts/fetch-npu-fw.sh`, проверка SHA-256) и кладётся
+  в initrd как `/lib/firmware/intel/vpu/vpu_37xx_v1.bin` вместе с лицензией Intel (`/lib/firmware/LICENSE.intel_vpu`);
+  в репозитории её нет.
 - **UEFI Runtime Services**: время прошивки, переменные NVRAM (`/sys/efi/`), выключение и перезагрузка
   через UEFI, перезагрузка в настройки UEFI (BIOS).
   Пока всё это работает в ядре; с появлением процессов приложения переедут в `userspace/`.
@@ -55,7 +60,7 @@ Limine (готовые бинарники, ветка `v9.x-binary`, зафик�
 | `usb` | `auto` | подключить USB-накопители сразу при старте (иначе клавишей U) |
 | `usbrw` | `all` | разрешить запись на все накопители (по умолчанию только на загрузочный) |
 | `efi` | `off` | не трогать UEFI Runtime Services (если прошивка на них падает) |
-| `npu` | `off` | не запускать NPU при загрузке (шаг A: включение/выключение питания) |
+| `npu` | `off`, `power` | `off`: не трогать NPU при загрузке; `power`: только шаг A (питание), без прошивки |
 
 ## Файловый менеджер
 
@@ -111,7 +116,8 @@ kernel/
   src/usb/                  xHCI (опрос, без хабов), USB mass storage
   src/block/                блочные устройства, GPT/MBR
   src/efi/                  UEFI Runtime Services (вызовы в физическом режиме, identity-map)
-  src/npu/                  драйвер Intel NPU (порт Linux ivpu), пока шаг A: питание
+  src/npu/                  драйвер Intel NPU (порт Linux ivpu): питание (npu.cpp), MMU NPU (mmu.cpp),
+                            прошивка и старт (boot.cpp), общие функции регистров и памяти (hw.cpp)
   src/apps/                 файловый менеджер, просмотрщик, редактор, UI-диалоги
 loader/src/                 Brooks Boot: UEFI-приложение (PE, clang + lld-link), протокол Limine
 rootfs/                     содержимое initrd.tar
