@@ -71,13 +71,14 @@ $(LIMINE_EFI):
 limine: $(LIMINE_EFI)
 
 img: $(BUILD)/$(IMG_NAME).img
-$(BUILD)/$(IMG_NAME).img: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) boot/limine.conf scripts/make-image.sh
-	./scripts/make-image.sh $(BUILD)/kernel.elf $(BUILD)/initrd.tar $@
+$(BUILD)/$(IMG_NAME).img: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) $(BUILD)/BOOTX64.EFI boot/limine.conf scripts/make-image.sh
+	./scripts/make-image.sh $(BUILD)/kernel.elf $(BUILD)/initrd.tar $@ $(BUILD)/BOOTX64.EFI
 
-esp: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) boot/limine.conf
+esp: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) $(BUILD)/BOOTX64.EFI boot/limine.conf
 	rm -rf $(BUILD)/esp $(BUILD)/$(IMG_NAME)-esp.zip
-	mkdir -p $(BUILD)/esp/EFI/BOOT $(BUILD)/esp/boot/limine
-	cp $(LIMINE_EFI) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
+	mkdir -p $(BUILD)/esp/EFI/BOOT $(BUILD)/esp/EFI/limine $(BUILD)/esp/boot/limine
+	cp $(BUILD)/BOOTX64.EFI $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
+	cp $(LIMINE_EFI) $(BUILD)/esp/EFI/limine/BOOTX64.EFI
 	cp boot/limine.conf $(BUILD)/esp/boot/limine/limine.conf
 	cp $(BUILD)/kernel.elf $(BUILD)/esp/boot/kernel.elf
 	cp $(BUILD)/initrd.tar $(BUILD)/esp/boot/initrd.tar
@@ -96,3 +97,25 @@ distclean: clean
 	rm -rf $(LIMINE_DIR)
 
 -include $(OBJS:.o=.d)
+
+# ---------------------------------------------------------------- Brooks Boot (UEFI loader)
+LOADER_FLAGS := --target=x86_64-unknown-windows -std=c++20 -O2 -ffreestanding -fno-exceptions -fno-rtti \
+	-fno-stack-protector -fshort-wchar -mno-red-zone -mgeneral-regs-only -fno-builtin -Wall -Wextra -Werror
+LOADER_OBJS := $(BUILD)/loader/main.obj $(BUILD)/loader/trampoline.obj
+
+$(BUILD)/loader/main.obj: loader/src/main.cpp loader/src/efi.h kernel/include/limine.h
+	@mkdir -p $(dir $@)
+	@echo "  CXX  $<"
+	@$(CXX) $(LOADER_FLAGS) -c $< -o $@
+
+$(BUILD)/loader/trampoline.obj: loader/src/trampoline.S
+	@mkdir -p $(dir $@)
+	@echo "  AS   $<"
+	@$(CC) --target=x86_64-unknown-windows -c $< -o $@
+
+$(BUILD)/BOOTX64.EFI: $(LOADER_OBJS)
+	@echo "  LINK $@"
+	@lld-link /subsystem:efi_application /entry:efi_main /nodefaultlib /out:$@ $(LOADER_OBJS) >/dev/null
+
+loader: $(BUILD)/BOOTX64.EFI
+.PHONY: loader
