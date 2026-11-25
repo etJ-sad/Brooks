@@ -189,6 +189,7 @@ bool resolve_target(const char* in, fs::Node* base, const char* keep_name, fs::N
     for (char* p = buf; *p; p++)
         if (*p == '/') slash = p;
     if (!slash) {
+        if (l > size_t(fs::NAME_MAX)) return false;  // name[] holds NAME_MAX + 1 bytes
         *dir = start;
         memcpy(name, buf, l + 1);
         return true;
@@ -207,6 +208,7 @@ bool resolve_target(const char* in, fs::Node* base, const char* keep_name, fs::N
     if (!d || !d->dir) return false;
     *dir = d;
     size_t nl = strlen(slash + 1);
+    if (nl > size_t(fs::NAME_MAX)) return false;
     memcpy(name, slash + 1, nl + 1);
     return nl > 0;
 }
@@ -399,7 +401,8 @@ void power_menu() {
 
 void enter(Panel& p) {
     fs::Node* n = selected(p);
-    if (!n) {  // ".."
+    if (!n) {  // ".." (or an empty root panel: nothing to do)
+        if (!p.dir || !p.dir->parent) return;
         fs::Node* from = p.dir;
         p.dir = p.dir->parent;
         p.sel = 0;
