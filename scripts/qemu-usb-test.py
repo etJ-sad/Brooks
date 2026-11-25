@@ -67,8 +67,17 @@ def shot(name):
 
 key("ret", 4)
 key("u", 15); shot("usb-attach"); key("esc", 2)
-key("tab"); key("end"); key("ret", 3); shot("usb0-root")
-if mode == "write":
+key("tab"); key("end")
+if mode.startswith("exfat"): key("down")
+key("ret", 3); shot("usb-root")
+if mode == "exfat-write":
+    key("9", 1.5); typ("exfat note.txt"); key("ret", 2)
+    typ("written by the Brooks exFAT driver"); key("f2", 3); key("esc", 2)
+    key("7", 1.5); typ("New Dir"); key("ret", 3)
+    key("end"); key("up"); key("ret", 3)          # enter "New Dir" (dirs sort first; .. then New Dir)
+    key("9", 1.5); typ("inner.txt"); key("ret", 2); typ("inner file"); key("f2", 3); key("esc", 2)
+    key("backspace", 2); shot("usb-after-write")
+elif mode == "write":
     key("9", 1.5); typ("Notes from Brooks.txt"); key("ret", 2)
     typ("written by the Brooks FAT32 driver"); key("f2", 3); key("esc", 2)
     key("7", 1.5); typ("My Folder"); key("ret", 3)

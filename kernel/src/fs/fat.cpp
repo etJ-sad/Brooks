@@ -13,9 +13,9 @@ namespace {
 constexpr uint32_t EOC = 0x0FFFFFF8;
 
 struct Fat {
+    fs::MountBase base;
     blk::Volume vol;
     uint32_t bps, spc, rsvd, nfats, fatsz, root, data_start, nclusters, cbytes, fsinfo;
-    bool ro;
     uint32_t hint;
     uint8_t* fatbuf;
     uint32_t fatbuf_sec;
@@ -347,7 +347,7 @@ fs::Error flush_err(Fat* f) { return fat_flush(f) ? fs::Ok : fs::IoError; }
 
 fs::Error create(fs::Node* dir, fs::Node* n) {
     Fat* f = F(dir);
-    if (f->ro) return fs::ReadOnly;
+    if (f->base.ro) return fs::ReadOnly;
     uint32_t dc = uint32_t(dir->fs_a);
     if (dc < 2) return fs::IoError;
     uint8_t short11[11];
@@ -439,7 +439,7 @@ fs::Error create(fs::Node* dir, fs::Node* n) {
 
 fs::Error write(fs::Node* n, const void* data, size_t len) {
     Fat* f = F(n);
-    if (f->ro) return fs::ReadOnly;
+    if (f->base.ro) return fs::ReadOnly;
     if (len > 0xFFFFFFFFull) return fs::NoSpace;
     uint32_t dc = uint32_t(n->parent->fs_a);
     uint32_t count = uint32_t((len + f->cbytes - 1) / f->cbytes);
@@ -481,7 +481,7 @@ fs::Error write(fs::Node* n, const void* data, size_t len) {
 
 fs::Error remove(fs::Node* n) {
     Fat* f = F(n);
-    if (f->ro) return fs::ReadOnly;
+    if (f->base.ro) return fs::ReadOnly;
     uint32_t dc = uint32_t(n->parent->fs_a);
     uint8_t e[32];
     for (uint32_t i = uint32_t(n->fs_b - n->fs_c); i <= uint32_t(n->fs_b); i++) {
@@ -525,7 +525,8 @@ Fat* try_open(const blk::Volume& v) {
             f->nclusters = (total - f->data_start) / spc;
             f->cbytes = bps * spc;
             f->fsinfo = uint32_t(bs[48] | (bs[49] << 8));
-            f->ro = true;
+            f->base.ro = true;
+            f->base.can_write = true;
             f->hint = 2;
             f->fatbuf = static_cast<uint8_t*>(kmalloc(bps));
             f->fatbuf_sec = 0xFFFFFFFF;
@@ -540,53 +541,28 @@ Fat* try_open(const blk::Volume& v) {
     return result;
 }
 
-int g_mounts = 0;
-
 }  // namespace
 
-int mount_all(void (*log)(const char*), bool all_rw) {
-    char line[200];
-    int mounted = 0;
-    for (int d = 0; d < blk::device_count(); d++) {
-        blk::Device* dev = blk::device(d);
-        blk::Volume vols[16];
-        int nv = blk::scan(dev, vols, 16);
-        if (nv == 0) {
-            vols[0] = {dev, 0, dev->sectors, 0, "whole disk"};
-            nv = 1;
-        }
-        for (int i = 0; i < nv; i++) {
-            Fat* f = try_open(vols[i]);
-            if (!f) {
-                ksnprintf(line, sizeof(line), "  %s part %d (%s): not FAT32, skipped", dev->name, vols[i].index,
-                          vols[i].type);
-                if (log) log(line);
-                continue;
-            }
-            char mname[16];
-            ksnprintf(mname, sizeof(mname), "usb%d", g_mounts);
-            fs::Node* root = fs::mount(mname, &kOps, f, f->root, 0, 0);
-            if (!root) continue;
-            g_mounts++;
-            char probe[64];
-            ksnprintf(probe, sizeof(probe), "/%s/boot/limine/limine.conf", mname);
-            bool boot = fs::lookup(probe) != nullptr;
-            f->ro = !(boot || all_rw);
-            if (!f->ro && f->fsinfo && f->fsinfo < f->rsvd) {
-                // Our free-cluster bookkeeping is not tracked: mark FSInfo hints as unknown.
-                if (blk::read(f->vol, f->fsinfo, 1, f->secbuf) && memcmp(f->secbuf, "RRaA", 4) == 0) {
-                    memset(f->secbuf + 488, 0xFF, 8);
-                    blk::write(f->vol, f->fsinfo, 1, f->secbuf);
-                }
-            }
-            ksnprintf(line, sizeof(line), "  /%s: FAT32 \"%s\" on %s part %d, %lu MiB, cluster %u B, %s%s", mname,
-                      f->label, dev->name, vols[i].index, uint64_t(f->nclusters) * f->cbytes >> 20, f->cbytes,
-                      f->ro ? "read-only" : "read-write", boot ? " (boot drive)" : "");
-            if (log) log(line);
-            mounted++;
+bool probe_mount(const blk::Volume& v, const char* mname, bool all_rw, char* info, size_t cap) {
+    Fat* f = try_open(v);
+    if (!f) return false;
+    fs::Node* root = fs::mount(mname, &kOps, f, f->root, 0, 0);
+    if (!root) return false;
+    char probe[64];
+    ksnprintf(probe, sizeof(probe), "/%s/boot/limine/limine.conf", mname);
+    bool boot = fs::lookup(probe) != nullptr;
+    f->base.ro = !(boot || all_rw);
+    if (!f->base.ro && f->fsinfo && f->fsinfo < f->rsvd) {
+        // Free-cluster bookkeeping is not tracked: mark the FSInfo hints as unknown.
+        if (blk::read(f->vol, f->fsinfo, 1, f->secbuf) && memcmp(f->secbuf, "RRaA", 4) == 0) {
+            memset(f->secbuf + 488, 0xFF, 8);
+            blk::write(f->vol, f->fsinfo, 1, f->secbuf);
         }
     }
-    return mounted;
+    ksnprintf(info, cap, "FAT32 \"%s\", %lu MiB, cluster %u B, %s%s", f->label,
+              uint64_t(f->nclusters) * f->cbytes >> 20, f->cbytes, f->base.ro ? "read-only" : "read-write",
+              boot ? " (boot drive)" : "");
+    return true;
 }
 
 }  // namespace fat

@@ -13,6 +13,12 @@ constexpr int PATH_MAX = 1024;
 struct Node;
 enum Error : int;
 
+// Common header of every disk mount's private data (first member).
+struct MountBase {
+    bool ro;
+    bool can_write;  // backend supports writing at all
+};
+
 // Backend hooks for nodes that live on a disk file system (nullptr = pure RAM).
 struct Ops {
     bool (*load_dir)(Node* dir);    // populate children with fs::attach()
@@ -69,6 +75,8 @@ bool ensure_data(Node* f);
 // cached file contents.
 Node* attach(Node* dir, const char* name, bool is_dir);
 bool set_data(Node* f, const void* data, size_t len);
+// Mount info for any node: nullptr if it lives in RAM.
+MountBase* mount_of(Node* n);
 // Create a mount point `name` under root served by `ops`.
 Node* mount(const char* name, const Ops* ops, void* mnt, uint64_t a, uint64_t b, uint64_t c);
 

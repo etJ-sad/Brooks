@@ -177,6 +177,8 @@ bool set_data(Node* f, const void* data, size_t len) {
     return true;
 }
 
+MountBase* mount_of(Node* n) { return n && n->ops ? static_cast<MountBase*>(n->mnt) : nullptr; }
+
 Node* mount(const char* name, const Ops* ops, void* mnt, uint64_t a, uint64_t b, uint64_t c) {
     Node* existing = find_child(g_root, name);
     if (existing) remove(existing);

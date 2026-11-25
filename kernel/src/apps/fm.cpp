@@ -307,11 +307,12 @@ void show_help() {
         "5 / F5   копировать            6 / F6   перенести / переименовать",
         "7 / F7   новая папка           8 / F8 / Delete   удалить",
         "9 / F9   новый файл            0 / F10  меню: USB, перезагрузка, выключение",
-        "U        подключить USB-накопители (FAT32), они появятся как /usb0, /usb1 ...",
+        "U        подключить USB-накопители (FAT32, exFAT), они появятся как /usb0, /usb1 ...",
+        "W        разрешить / запретить запись на накопитель текущей панели",
         "",
         "Корень / живёт в RAM: изменения там пропадут после перезагрузки.",
         "Файлы на /usbN пишутся на диск сразу. Загрузочный USB-SSD доступен для записи,",
-        "остальные накопители только для чтения (параметр usbrw=all снимает ограничение).",
+        "остальные накопители только для чтения: W разрешает запись (или параметр usbrw=all).",
     };
     const int n = int(sizeof(lines) / sizeof(lines[0]));
     int w = 0;
@@ -346,6 +347,27 @@ void attach_usb() {
     ui::logbox_add(line);
     ui::logbox_end();
     for (Panel& p : g_p) reload(p, selected(p));
+}
+
+void toggle_write(Panel& p) {
+    fs::MountBase* m = fs::mount_of(p.dir);
+    if (!m) {
+        set_msg(Yellow, "Эта папка в RAM, запись и так разрешена.");
+        return;
+    }
+    if (!m->can_write) {
+        set_msg(Yellow, "Эта файловая система пока поддерживается только для чтения.");
+        return;
+    }
+    if (m->ro) {
+        if (!ui::confirm("Запись на диск", "Разрешить запись на этот накопитель? Драйвер новый: сделайте копию важных данных."))
+            return;
+        m->ro = false;
+        set_msg(Green, "Запись разрешена.");
+    } else {
+        m->ro = true;
+        set_msg(Green, "Накопитель снова только для чтения.");
+    }
 }
 
 void power_menu() {
@@ -437,6 +459,7 @@ void file_manager(bool usb_auto) {
         case kbd::F10: power_menu(); break;
         case kbd::Char:
             if (e.ch == 'u' || e.ch == 'U') attach_usb();
+            if (e.ch == 'w' || e.ch == 'W') toggle_write(p);
             break;
         default: break;
         }
