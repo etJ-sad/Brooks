@@ -122,7 +122,9 @@ void printf(const char* f, ...) {
 
 [[noreturn]] void fatal(const char* msg) {
     ST->ConOut->SetAttribute(ST->ConOut, 0x0C);
-    printf("\nBrooks Boot error: %s\nSystem halted. Power off with the power button.\n", msg);
+    printf("\nBrooks Boot FATAL: %s\nBack to the firmware boot menu in 10 s...\n", msg);
+    BS->Stall(10 * 1000 * 1000);
+    BS->Exit(g_image, EFI_LOAD_ERROR, 0, nullptr);  // only fails after ExitBootServices
     for (;;) asm volatile("hlt");
 }
 

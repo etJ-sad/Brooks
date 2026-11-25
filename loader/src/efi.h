@@ -14,6 +14,7 @@ typedef uint64_t EFI_PHYSICAL_ADDRESS;
 
 constexpr EFI_STATUS EFI_SUCCESS = 0;
 constexpr EFI_STATUS EFI_ERR = 0x8000000000000000ull;
+constexpr EFI_STATUS EFI_LOAD_ERROR = EFI_ERR | 1;
 constexpr EFI_STATUS EFI_BUFFER_TOO_SMALL = EFI_ERR | 5;
 constexpr EFI_STATUS EFI_NOT_READY = EFI_ERR | 6;
 constexpr EFI_STATUS EFI_NOT_FOUND = EFI_ERR | 14;
@@ -100,7 +101,7 @@ struct EFI_BOOT_SERVICES {
     void* InstallConfigurationTable;
     EFI_STATUS(EFIAPI* LoadImage)(bool, EFI_HANDLE, void*, void*, uint64_t, EFI_HANDLE*);
     EFI_STATUS(EFIAPI* StartImage)(EFI_HANDLE, uint64_t*, CHAR16**);
-    void* Exit;
+    EFI_STATUS(EFIAPI* Exit)(EFI_HANDLE, EFI_STATUS, uint64_t, void*);
     void* UnloadImage;
     EFI_STATUS(EFIAPI* ExitBootServices)(EFI_HANDLE, uint64_t);
     void* GetNextMonotonicCount;
