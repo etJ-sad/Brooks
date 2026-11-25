@@ -23,6 +23,11 @@ jobs:
           python3 -c "from PIL import Image; Image.open('build/screen.ppm').save('build/screen.png')"
       - name: File manager test (simulated key presses)
         run: python3 scripts/qemu-fm-test.py build/brooks.img build/fm-test
+      - name: UEFI runtime test (/sys/efi files, power-off via ResetSystem)
+        run: |
+          python3 scripts/qemu-efi-test.py build/brooks.img build/efi-test | tee build/efi-test.txt
+          grep -q "powered off: yes" build/efi-test.txt
+          grep -aq "^EFI:   UEFI" build/efi-test/serial.log
       - uses: actions/upload-artifact@v4
         with:
           name: boot-image
@@ -32,4 +37,5 @@ jobs:
             build/screen.png
             build/serial.log
             build/fm-test/*.png
+            build/efi-test/*.png
           if-no-files-found: error

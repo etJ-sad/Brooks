@@ -2,6 +2,7 @@
 // Two-panel file manager. Keys: F1..F10, or digits 1..0 on laptops where the
 // F-row needs Fn.
 #include "acpi/acpi.h"
+#include "efi/efi.h"
 #include "apps/apps.h"
 #include "apps/ui.h"
 #include "arch/x86_64/apic.h"
@@ -371,12 +372,28 @@ void toggle_write(Panel& p) {
 }
 
 void power_menu() {
-    char c = ui::choose("Меню", "U: подключить USB-накопители   R: перезагрузка   P: выключение   Esc: отмена", "urp");
+    char c = ui::choose("Меню",
+                        "U: подключить USB-накопители   R: перезагрузка   P: выключение   "
+                        "F: перезагрузка в настройки UEFI (BIOS)   Esc: отмена",
+                        "urpf");
     if (c == 'u') attach_usb();
-    if (c == 'r') acpi::reboot();
+    if (c == 'r') {
+        efi::reset(efi::Cold);  // returns only if the firmware refused
+        acpi::reboot();
+    }
     if (c == 'p') {
+        efi::reset(efi::Shutdown);
         acpi::poweroff();
-        ui::message("Выключение", "ACPI S5 не сработал. Выключите кнопкой питания.");
+        ui::message("Выключение", "Ни UEFI, ни ACPI S5 не выключили машину. Выключите кнопкой питания.");
+    }
+    if (c == 'f') {
+        if (!efi::request_firmware_setup()) {
+            ui::message("Настройки UEFI", efi::available() ? "Прошивка не поддерживает вход в настройки по запросу ОС."
+                                                           : "UEFI runtime services недоступны.");
+            return;
+        }
+        efi::reset(efi::Cold);
+        acpi::reboot();
     }
 }
 

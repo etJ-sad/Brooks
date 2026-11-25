@@ -12,4 +12,8 @@ enum Cache { WriteBack, Uncached };
 // Map [phys, phys+len) and return the virtual address of `phys`, nullptr on failure.
 void* map(uint64_t phys, size_t len, Cache cache);
 
+// Map [phys, phys+len) at the same virtual address (lower half). Used for UEFI
+// runtime services, which are called without SetVirtualAddressMap.
+bool map_identity(uint64_t phys, size_t len, Cache cache, bool exec);
+
 }  // namespace vmm

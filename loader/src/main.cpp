@@ -522,6 +522,7 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE* st) {
     auto* mm_entries = static_cast<limine_memmap_entry*>(arena(sizeof(limine_memmap_entry) * MAXMAP));
     auto** mm_ptrs = static_cast<limine_memmap_entry**>(arena(sizeof(void*) * MAXMAP));
     auto* mm_resp = anew<limine_memmap_response>();
+    auto* em_resp = anew<limine_efi_memmap_response>();  // raw EFI map, for runtime services
 
     // Stack and GDT
     uint64_t stack = alloc_pages(16, MEM_RECLAIMABLE);
@@ -591,7 +592,8 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE* st) {
                               BI[4] = LIMINE_BOOTLOADER_INFO_REQUEST, FW[4] = LIMINE_FIRMWARE_TYPE_REQUEST,
                               RS[4] = LIMINE_RSDP_REQUEST, MO[4] = LIMINE_MODULE_REQUEST,
                               ST_[4] = LIMINE_EFI_SYSTEM_TABLE_REQUEST, EA[4] = LIMINE_EXECUTABLE_ADDRESS_REQUEST,
-                              PM[4] = LIMINE_PAGING_MODE_REQUEST, SS[4] = LIMINE_STACK_SIZE_REQUEST;
+                              PM[4] = LIMINE_PAGING_MODE_REQUEST, SS[4] = LIMINE_STACK_SIZE_REQUEST,
+                              EM[4] = LIMINE_EFI_MEMMAP_REQUEST;
         void* r = nullptr;
         if (is(FB)) {
             r = fb_resp;
@@ -631,6 +633,8 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE* st) {
             x->module_count = uint64_t(nmods);
             x->modules = reinterpret_cast<limine_file**>(hv(list));
             r = x;
+        } else if (is(EM)) {
+            r = em_resp;
         } else if (is(ST_)) {
             auto* x = anew<limine_efi_system_table_response>();
             x->revision = 0;
@@ -724,6 +728,11 @@ extern "C" EFI_STATUS EFIAPI efi_main(EFI_HANDLE image, EFI_SYSTEM_TABLE* st) {
         mm_resp->revision = 0;
         mm_resp->entry_count = uint64_t(m);
         mm_resp->entries = reinterpret_cast<limine_memmap_entry**>(hv(mm_ptrs));
+        em_resp->revision = 0;
+        em_resp->memmap = reinterpret_cast<void*>(hv(map));
+        em_resp->memmap_size = msz;
+        em_resp->desc_size = dsz;
+        em_resp->desc_version = dver;
         if (BS->ExitBootServices(image, key) == EFI_SUCCESS) break;
         if (attempt > 4) fatal("ExitBootServices failed");
     }
