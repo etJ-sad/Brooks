@@ -3,6 +3,7 @@
 // F-row needs Fn.
 #include "acpi/acpi.h"
 #include "efi/efi.h"
+#include "npu/npu.h"
 #include "apps/apps.h"
 #include "apps/ui.h"
 #include "arch/x86_64/apic.h"
@@ -362,6 +363,16 @@ void attach_usb() {
     for (Panel& p : g_p) reload(p, selected(p));
 }
 
+void npu_log(const char* line) { ui::logbox_add(line); }
+
+void npu_test() {
+    ui::logbox_begin("NPU: включение питания (шаг A)");
+    npu::bringup(npu_log);
+    ui::logbox_add("Полный лог: /sys/npu/bringup.txt");
+    ui::logbox_end();
+    for (Panel& p : g_p) reload(p, selected(p));
+}
+
 void toggle_write(Panel& p) {
     fs::MountBase* m = fs::mount_of(p.dir);
     if (!m) {
@@ -386,8 +397,9 @@ void toggle_write(Panel& p) {
 void power_menu() {
     char c = ui::choose("Меню",
                         "U: подключить USB-накопители   R: перезагрузка   P: выключение   "
-                        "F: перезагрузка в настройки UEFI (BIOS)   Esc: отмена",
-                        "urpf");
+                        "F: перезагрузка в настройки UEFI (BIOS)   N: тест NPU   Esc: отмена",
+                        "urpfn");
+    if (c == 'n') npu_test();
     if (c == 'u') attach_usb();
     if (c == 'r') {
         efi::reset(efi::Cold);  // returns only if the firmware refused

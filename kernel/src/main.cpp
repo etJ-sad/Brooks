@@ -10,6 +10,7 @@
 
 #include "acpi/acpi.h"
 #include "efi/efi.h"
+#include "npu/npu.h"
 #include "apps/apps.h"
 #include "arch/x86_64/apic.h"
 #include "arch/x86_64/cpu.h"
@@ -363,6 +364,12 @@ extern "C" [[noreturn]] void kmain() {
         }
     }
     efi::publish_files();
+    // NPU bring-up step A (power up / down), on by default when an NPU is present; npu=off skips it.
+    {
+        char npu_opt[8] = "";
+        kstr::cmdline_get(cmdline, "npu", npu_opt, sizeof(npu_opt));
+        if (g_npu_index >= 0 && memcmp(npu_opt, "off", 4) != 0) npu::bringup([](const char* l) { kprintf("%s\n", l); });
+    }
     fs::put_file("/sys/bootlog.txt", con::log_data(), con::log_size());
     kprintf("FS:    RAM file system, %d entries from initrd (%s)\n", files, size_str(fs::used_bytes(), sz));
     kprintf("RAM:   %s managed, %s free\n", size_str(mm::total_bytes(), sz), size_str(mm::free_bytes(), sz));

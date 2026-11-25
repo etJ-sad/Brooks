@@ -99,6 +99,21 @@ NPU FOUND: Arrow Lake NPU (NPU37xx) at 00:0b.0, id 8086:ad1d rev .., subsystem .
   BAR0 MMIO 0x... 64-bit
   BAR4 MMIO 0x... 64-bit
 Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU)
+...
+NPU bring-up (step A: power): Arrow Lake NPU 00:0b.0 id 8086:ad1d rev ..
+  PCI PM: D0
+  BAR0 (NPU IP) 0x..., BAR4 (buttress) 0x...
+  PLL ratios: min .. (... MHz), nominal .. (... MHz), max .. (... MHz)
+Power up:
+  workpoint request (PLL on)   ok
+  host subsystem configure     ok
+  power domain enable          ok
+  host AXI enable              ok
+  top NOC enable               ok
+  NPU timer: ... -> ... (+... in 1 ms)  NPU IS ALIVE
+Power down:
+  ...
+NPU step A: PASS (power up + down)
 ACPI:  rev 2 OEM '...', NN tables: FACP APIC ...
 IRQ:   LAPIC 0xfee00000, 1 IOAPIC, ...; TSC .... MHz (CPUID 15h); timer 100 Hz
 EFI:   UEFI 2.xx, '<производитель>' rev ..., N runtime regions (... KiB) mapped; time <дата и время>
@@ -128,6 +143,13 @@ NVMe с Windows не трогается: драйвера NVMe нет. Пише�
 - Внимание: после U встроенная в BIOS эмуляция USB-клавиатуры перестаёт работать (ядро забирает контроллер).
   Встроенная клавиатура ноутбука (i8042) при этом продолжает работать.
 
+### NPU
+
+При загрузке ядро само включает и выключает питание NPU (шаг A запуска) и пишет каждый шаг в лог.
+Главная строка: `NPU step A: PASS` и `NPU IS ALIVE` (у NPU пошёл собственный таймер).
+Повторить из менеджера: `0` → `N`. Полный лог: `/sys/npu/bringup.txt` (можно скопировать на флешку клавишей 5).
+Если на этих строках машина зависла или перезагрузилась: добавь `npu=off` в `cmdline:` и пришли фото последней строки.
+
 ### UEFI
 
 - `/sys/efi/info.txt`: версия UEFI, производитель прошивки, время, Secure Boot, место в NVRAM.
@@ -145,6 +167,8 @@ NVMe с Windows не трогается: драйвера NVMe нет. Пише�
 | Чёрный экран после меню | подожди 10 с; затем выбери пункт `force 3840x2160` или `large text`; если не помогло, `Limine (fallback)`; сообщи, на каком пункте висит |
 | `Starting kernel...` и тишина / перезагрузка | выбери `Limine (fallback)`; если с ним работает, пришли фото: это ошибка Brooks Boot |
 | Паника на строке `EFI:` | добавь `efi=off` в `cmdline:` |
+| Зависание на строках `NPU` / `Power up:` | добавь `npu=off` в `cmdline:`, пришли фото последних строк |
+| `NPU step A: FAILED` | сфотографируй все строки `NPU`, особенно `TIMEOUT` / `FAILED` с адресом и значением регистра |
 | После U диск не появился | сфотографируй строки `xhci` / `usb` в окне подключения; попробуй другой порт (USB-A и USB-C идут на разные контроллеры) |
 | NPU не найден (жёлтая строка) | сфотографируй список PCI: возможно, NPU выключен в BIOS (ищи пункт вроде `NPU`, `VPU`, `AI Boost`) или у него другой ID |
 | Мелкий текст | пункт `large text` или правка `cmdline:` в `\boot\limine\limine.conf` (например `font=16x32 scale=2`) |
