@@ -1,0 +1,3 @@
+Viewer (3 / F3):   arrows, PgUp/PgDn, Home/End, h = hex, Esc = exit
+Editor (4 / F4):   arrows, Home/End, PgUp/PgDn, Tab = 4 spaces,
+                   F2 or Ctrl+S = save, Esc = exit (asks to save)
