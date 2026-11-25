@@ -24,6 +24,11 @@ void message(const char* title, const char* text);
 char choose(const char* title, const char* text, const char* keys);
 
 // Next key; while waiting, calls idle() roughly once a second (clock refresh).
+// Scrolling progress window: begin, add lines as work happens, end waits for a key.
+void logbox_begin(const char* title);
+void logbox_add(const char* line);
+void logbox_end();
+
 kbd::Event next_key(void (*idle)() = nullptr);
 
 void fmt_size(uint64_t bytes, char* out, size_t cap);

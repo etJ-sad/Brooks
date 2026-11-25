@@ -6,6 +6,7 @@
 #include "apps/ui.h"
 #include "arch/x86_64/apic.h"
 #include "drivers/keyboard.h"
+#include "fs/storage.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
 #include "mm/heap.h"
@@ -305,10 +306,12 @@ void show_help() {
         "3 / F3   просмотр (h: hex)     4 / F4   редактор (F2 или Ctrl+S: сохранить)",
         "5 / F5   копировать            6 / F6   перенести / переименовать",
         "7 / F7   новая папка           8 / F8 / Delete   удалить",
-        "9 / F9   новый файл            0 / F10  меню: перезагрузка, выключение",
+        "9 / F9   новый файл            0 / F10  меню: USB, перезагрузка, выключение",
+        "U        подключить USB-накопители (FAT32), они появятся как /usb0, /usb1 ...",
         "",
-        "Файлы живут в RAM: всё, что создано или изменено, пропадёт после перезагрузки,",
-        "пока не будет драйвера USB-накопителя. Исходное содержимое берётся из /boot/initrd.tar.",
+        "Корень / живёт в RAM: изменения там пропадут после перезагрузки.",
+        "Файлы на /usbN пишутся на диск сразу. Загрузочный USB-SSD доступен для записи,",
+        "остальные накопители только для чтения (параметр usbrw=all снимает ограничение).",
     };
     const int n = int(sizeof(lines) / sizeof(lines[0]));
     int w = 0;
@@ -323,8 +326,31 @@ void show_help() {
     ui::next_key();
 }
 
+void usb_log(const char* line) {
+    kprintf("%s\n", line);  // boot log + serial (screen output is suspended)
+    ui::logbox_add(line);
+}
+
+}  // namespace
+
+bool g_usb_all_rw = false;
+
+namespace {
+
+void attach_usb() {
+    ui::logbox_begin("USB-накопители");
+    ui::logbox_add("Внимание: драйвер USB забирает контроллер у BIOS, USB-клавиатура может перестать работать.");
+    int n = storage::attach(usb_log, g_usb_all_rw);
+    char line[96];
+    ksnprintf(line, sizeof(line), "Подключено томов: %d. Они видны в корне как /usb0, /usb1 ...", n);
+    ui::logbox_add(line);
+    ui::logbox_end();
+    for (Panel& p : g_p) reload(p, selected(p));
+}
+
 void power_menu() {
-    char c = ui::choose("Меню", "R: перезагрузка   P: выключение   Esc: отмена", "rp");
+    char c = ui::choose("Меню", "U: подключить USB-накопители   R: перезагрузка   P: выключение   Esc: отмена", "urp");
+    if (c == 'u') attach_usb();
     if (c == 'r') acpi::reboot();
     if (c == 'p') {
         acpi::poweroff();
@@ -354,7 +380,7 @@ void enter(Panel& p) {
 
 }  // namespace
 
-void file_manager() {
+void file_manager(bool usb_auto) {
     suspend_stream(true);
     fs::Node* home = fs::lookup("/home");
     g_p[0] = {home ? home : fs::root(), nullptr, 0, 0, 0, 0};
@@ -362,7 +388,11 @@ void file_manager() {
     reload(g_p[0], nullptr);
     reload(g_p[1], nullptr);
     fill(0, 0, ui::cols(), ui::rows(), ' ', Default, Black);
-    set_msg(Dim, "1 или F1: справка. Tab: другая панель. Файлы в RAM, после перезагрузки изменения пропадут.");
+    set_msg(Dim, "1 или F1: справка. U: подключить USB-накопители. Tab: другая панель.");
+    if (usb_auto) {
+        draw();
+        attach_usb();
+    }
 
     for (;;) {
         draw();
@@ -405,6 +435,9 @@ void file_manager() {
         case kbd::F8: case kbd::Delete: do_delete(); break;
         case kbd::F9: do_mkdir(true); break;
         case kbd::F10: power_menu(); break;
+        case kbd::Char:
+            if (e.ch == 'u' || e.ch == 'U') attach_usb();
+            break;
         default: break;
         }
     }

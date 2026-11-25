@@ -103,6 +103,10 @@ const char* const kKeys[10] = {"Помощь", "Сохран", nullptr, nullptr,
 
 void edit(fs::Node* f) {
     if (!f || f->dir) return;
+    if (!fs::ensure_data(f)) {
+        ui::message("Редактор", "Не удалось прочитать файл с диска");
+        return;
+    }
     Doc d;
     {
         size_t s = 0;

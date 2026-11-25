@@ -13,6 +13,11 @@ struct Device {
 };
 
 uint32_t read32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off);
+void write32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off, uint32_t v);
+// Physical address of a memory BAR (handles 64-bit BARs), 0 if not a memory BAR.
+uint64_t bar_address(const Device& d, int bar);
+// Enable memory decoding and bus mastering (DMA) in the command register.
+void enable_mmio_dma(const Device& d);
 
 // Brute-force scan of every bus/device/function via legacy port I/O
 // (0xCF8/0xCFC). Fills the internal table and returns the number of devices.

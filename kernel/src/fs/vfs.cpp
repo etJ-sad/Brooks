@@ -74,6 +74,17 @@ Node* make(Node* dir, const char* name, bool is_dir, Error* err) {
     Node* n = new_node(name, is_dir);
     if (!n) return fail(NoMemory);
     link(dir, n);
+    if (dir->ops) {
+        n->ops = dir->ops;
+        n->mnt = dir->mnt;
+        n->loaded = true;  // new and empty
+        Error e = dir->ops->create(dir, n);
+        if (e != Ok) {
+            unlink(n);
+            kfree(n);
+            return fail(e);
+        }
+    }
     if (!is_dir) g_files++;
     if (err) *err = Ok;
     return n;
@@ -86,7 +97,7 @@ void free_tree(Node* n) {
         free_tree(c);
     }
     if (!n->dir) {
-        g_used -= n->size;
+        if (n->loaded || !n->ops) g_used -= n->size;
         g_files--;
     }
     kfree(n->data);
@@ -106,6 +117,9 @@ const char* error_str(Error e) {
     case BadName: return "недопустимое имя";
     case Recursive: return "нельзя копировать папку в саму себя";
     case Busy: return "занято";
+    case ReadOnly: return "только для чтения";
+    case IoError: return "ошибка ввода-вывода";
+    case NoSpace: return "нет места на диске";
     }
     return "?";
 }
@@ -116,8 +130,70 @@ void init() {
 
 Node* root() { return g_root; }
 
+bool ensure_dir(Node* dir) {
+    if (!dir || !dir->dir) return false;
+    if (dir->ops && !dir->loaded) {
+        dir->loaded = true;  // set first: load_dir attaches children
+        if (!dir->ops->load_dir(dir)) {
+            dir->loaded = false;
+            return false;
+        }
+    }
+    return true;
+}
+
+bool ensure_data(Node* f) {
+    if (!f || f->dir) return false;
+    if (f->ops && !f->loaded) {
+        if (!f->ops->load_file(f)) return false;
+        f->loaded = true;
+    }
+    return true;
+}
+
+Node* attach(Node* dir, const char* name, bool is_dir) {
+    Node* n = new_node(name, is_dir);
+    if (!n) return nullptr;
+    n->ops = dir->ops;
+    n->mnt = dir->mnt;
+    link(dir, n);
+    if (!is_dir) g_files++;
+    return n;
+}
+
+bool set_data(Node* f, const void* data, size_t len) {
+    if (len > f->cap) {
+        void* p = kmalloc(len);
+        if (!p) return false;
+        kfree(f->data);
+        f->data = static_cast<uint8_t*>(p);
+        f->cap = len;
+    }
+    if (len) memcpy(f->data, data, len);
+    if (f->loaded || !f->ops) g_used -= f->size;
+    f->size = len;
+    g_used += len;
+    f->loaded = true;
+    return true;
+}
+
+Node* mount(const char* name, const Ops* ops, void* mnt, uint64_t a, uint64_t b, uint64_t c) {
+    Node* existing = find_child(g_root, name);
+    if (existing) remove(existing);
+    Node* n = new_node(name, true);
+    if (!n) return nullptr;
+    n->ops = ops;
+    n->mnt = mnt;
+    n->fs_a = a;
+    n->fs_b = b;
+    n->fs_c = c;
+    link(g_root, n);
+    return n;
+}
+
 Node* find_child(Node* dir, const char* name) {
     if (!dir || !dir->dir) return nullptr;
+    ensure_dir(dir);
     for (Node* c = dir->child; c; c = c->next)
         if (strlen(c->name) == strlen(name) && memcmp(c->name, name, strlen(name)) == 0) return c;
     return nullptr;
@@ -192,6 +268,13 @@ Node* mkdirs(const char* path) {
 Error write(Node* f, const void* data, size_t len) {
     if (!f) return NotFound;
     if (f->dir) return IsDir;
+    if (f->ops) {
+        Error e = f->ops->write(f, data, len);
+        if (e != Ok) return e;
+        if (!f->loaded) g_used += f->size;  // set_data subtracts the old size
+        f->loaded = true;
+        return set_data(f, data, len) ? Ok : NoMemory;
+    }
     if (len > f->cap) {
         void* p = kmalloc(len);
         if (!p) return NoMemory;
@@ -209,6 +292,16 @@ Error write(Node* f, const void* data, size_t len) {
 Error append(Node* f, const void* data, size_t len) {
     if (!f) return NotFound;
     if (f->dir) return IsDir;
+    if (f->ops) {
+        if (!ensure_data(f)) return IoError;
+        auto* tmp = static_cast<uint8_t*>(kmalloc(f->size + len + 1));
+        if (!tmp) return NoMemory;
+        memcpy(tmp, f->data, f->size);
+        memcpy(tmp + f->size, data, len);
+        Error e = write(f, tmp, f->size + len);
+        kfree(tmp);
+        return e;
+    }
     if (f->size + len > f->cap) {
         size_t cap = f->cap ? f->cap : 256;
         while (cap < f->size + len) cap *= 2;
@@ -227,6 +320,18 @@ Error append(Node* f, const void* data, size_t len) {
 Error remove(Node* n) {
     if (!n) return NotFound;
     if (n == g_root) return Busy;
+    bool is_mount = n->ops && n->parent == g_root;
+    if (n->ops && !is_mount) {
+        if (n->dir) {
+            if (!ensure_dir(n)) return IoError;
+            while (n->child) {
+                Error e = remove(n->child);
+                if (e != Ok) return e;
+            }
+        }
+        Error e = n->ops->remove(n);
+        if (e != Ok) return e;
+    }
     unlink(n);
     free_tree(n);
     return Ok;
@@ -242,6 +347,7 @@ Error copy(Node* src, Node* dst_dir, const char* name, Node** out) {
     if (!src) return NotFound;
     if (!dst_dir || !dst_dir->dir) return NotDir;
     if (src->dir && is_ancestor(src, dst_dir)) return Recursive;
+    if (src->dir ? !ensure_dir(src) : !ensure_data(src)) return IoError;
     Error e;
     Node* n = make(dst_dir, name, src->dir, &e);
     if (!n) return e;
@@ -263,6 +369,14 @@ Error move(Node* src, Node* dst_dir, const char* name) {
     if (!valid_name(name)) return BadName;
     Node* existing = find_child(dst_dir, name);
     if (existing && existing != src) return Exists;
+    if (src->ops || dst_dir->ops) {
+        if (existing == src) return Ok;
+        if (src->ops && src->parent == g_root) return Busy;  // mount point
+        // Disk involved: copy, then delete the source.
+        Error e = copy(src, dst_dir, name);
+        if (e != Ok) return e;
+        return remove(src);
+    }
     unlink(src);
     size_t l = strlen(name);
     memmove(src->name, name, l);
@@ -272,6 +386,7 @@ Error move(Node* src, Node* dst_dir, const char* name) {
 }
 
 int count_children(const Node* dir) {
+    if (dir) ensure_dir(const_cast<Node*>(dir));
     int n = 0;
     for (const Node* c = dir ? dir->child : nullptr; c; c = c->next) n++;
     return n;

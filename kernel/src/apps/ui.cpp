@@ -159,6 +159,48 @@ char choose(const char* title, const char* textline, const char* keys) {
     }
 }
 
+namespace {
+char g_lb_lines[40][160];
+int g_lb_n = 0;
+const char* g_lb_title = "";
+
+void logbox_draw(bool done) {
+    int w = cols() - 8 < 150 ? cols() - 8 : 150;
+    int h = rows() - 6 < 26 ? rows() - 6 : 26;
+    int x = (cols() - w) / 2, y = (rows() - h) / 2;
+    box(x, y, w, h, White, BgDialog, g_lb_title);
+    int body = h - 4;
+    int first = g_lb_n > body ? g_lb_n - body : 0;
+    for (int i = first; i < g_lb_n; i++) text(x + 2, y + 1 + (i - first), g_lb_lines[i % 40], White, BgDialog, w - 4);
+    text(x + 2, y + h - 2, done ? "Готово. Любая клавиша: закрыть" : "Работаю...", done ? Green : Yellow, BgDialog, w - 4);
+    flush();
+}
+}  // namespace
+
+void logbox_begin(const char* title) {
+    g_lb_title = title;
+    g_lb_n = 0;
+    logbox_draw(false);
+}
+
+void logbox_add(const char* line) {
+    size_t l = strlen(line);
+    if (l > 159) l = 159;
+    if (g_lb_n >= 40) {  // keep the newest 40
+        for (int i = 1; i < 40; i++) memcpy(g_lb_lines[i - 1], g_lb_lines[i], 160);
+        g_lb_n = 39;
+    }
+    memcpy(g_lb_lines[g_lb_n], line, l);
+    g_lb_lines[g_lb_n][l] = 0;
+    g_lb_n++;
+    logbox_draw(false);
+}
+
+void logbox_end() {
+    logbox_draw(true);
+    next_key();
+}
+
 void message(const char* title, const char* textline) {
     int tw = utf8_cols(textline);
     Dlg d = dialog_frame(title, 2, tw < 40 ? 40 : tw);

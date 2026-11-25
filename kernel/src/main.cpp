@@ -355,7 +355,11 @@ extern "C" [[noreturn]] void kmain() {
             if (kbd::poll(e) && (e.key == kbd::Enter || e.key == kbd::Esc || e.key == kbd::Char)) break;
             cpu::sti_hlt();
         }
-        apps::file_manager();
+        char usb[16] = "", usbrw[16] = "";
+        kstr::cmdline_get(cmdline, "usb", usb, sizeof(usb));
+        kstr::cmdline_get(cmdline, "usbrw", usbrw, sizeof(usbrw));
+        apps::g_usb_all_rw = memcmp(usbrw, "all", 4) == 0;
+        apps::file_manager(memcmp(usb, "auto", 5) == 0);
     }
     kcprintf(con::Red, "No interrupt controller: cannot run the file manager. Halted.\n");
     con::flush();
