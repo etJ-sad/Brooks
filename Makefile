@@ -58,12 +58,16 @@ $(BUILD)/kernel.elf: $(OBJS) kernel/linker.ld
 	@echo "  LD   $@"
 	@$(LD) $(LDFLAGS) $(OBJS) -o $@
 
+NPU_FW := third_party/npu-fw/lib/firmware/intel/vpu/vpu_37xx_v1.bin
+$(NPU_FW): scripts/fetch-npu-fw.sh
+	./scripts/fetch-npu-fw.sh
+
 ROOTFS_FILES := $(shell find rootfs -type f 2>/dev/null)
-$(BUILD)/initrd.tar: $(ROOTFS_FILES)
+$(BUILD)/initrd.tar: $(ROOTFS_FILES) $(NPU_FW)
 	@mkdir -p $(BUILD)
 	@echo "  TAR  $@"
 	@tar --format=ustar --owner=0 --group=0 --numeric-owner --mtime='2026-01-01 00:00Z' --sort=name \
-		-cf $@ -C rootfs .
+		-cf $@ -C rootfs . -C ../third_party/npu-fw lib
 
 $(LIMINE_EFI):
 	./scripts/fetch-limine.sh
@@ -94,7 +98,7 @@ run: img
 clean:
 	rm -rf $(BUILD)
 distclean: clean
-	rm -rf $(LIMINE_DIR)
+	rm -rf $(LIMINE_DIR) third_party/npu-fw
 
 -include $(OBJS:.o=.d)
 

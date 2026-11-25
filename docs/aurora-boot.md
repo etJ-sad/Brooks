@@ -99,6 +99,36 @@ NPU FOUND: Arrow Lake NPU (NPU37xx) at 00:0b.0, id 8086:ad1d rev .., subsystem .
   BAR0 MMIO 0x... 64-bit
   BAR4 MMIO 0x... 64-bit
 Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU)
+...
+NPU bring-up: Arrow Lake NPU 00:0b.0 id 8086:ad1d rev ..
+  PCI PM: D0
+  BAR0 (NPU IP) 0x..., BAR4 (buttress) 0x...
+  PLL ratios: min .. (... MHz), nominal .. (... MHz), max .. (... MHz)
+Power up (step A):
+  workpoint request (PLL on)   ok
+  ...
+  top NOC enable               ok
+  NPU timer: ... -> ... (+... in 1 ms)  NPU IS ALIVE
+Firmware (step B):
+  firmware file: /lib/firmware/intel/vpu/vpu_37xx_v1.bin
+  firmware: 2436260 bytes, header v1, version "20261028*MTL_CLIENT_SILICON-NVR+NN-deployment*..."
+  ...
+NPU MMU:
+  MMU ID: IDR0=0x........ ... (Linux expects 080f3e0f 0e739d18 0000003c 00040070)
+  MMU enabled
+  mapped: runtime 0x84800000..0x88800000, IPC tx 0x90000000 rx 0x90004000, ...
+  image copied; entry 0x84803000 -> phys 0x... (page tables ok)
+Start firmware:
+  NPU CPU released, entry 0x84803000 (LOADING_ADDRESS_LO=0x00424019)
+  first IPC message after .. ms
+  IPC rx @0x900040..: channel 0x3ff, data_addr 0x424f4f54, ...
+  MMU: no events
+    fw| <последние строки лога самой прошивки>
+  FIRMWARE READY: the NPU answered "BOOT"
+Power down:
+  ...
+NPU step A (power): PASS
+NPU step B (firmware): PASS, firmware answered
 ACPI:  rev 2 OEM '...', NN tables: FACP APIC ...
 IRQ:   LAPIC 0xfee00000, 1 IOAPIC, ...; TSC .... MHz (CPUID 15h); timer 100 Hz
 EFI:   UEFI 2.xx, '<производитель>' rev ..., N runtime regions (... KiB) mapped; time <дата и время>
@@ -128,6 +158,16 @@ NVMe с Windows не трогается: драйвера NVMe нет. Пише�
 - Внимание: после U встроенная в BIOS эмуляция USB-клавиатуры перестаёт работать (ядро забирает контроллер).
   Встроенная клавиатура ноутбука (i8042) при этом продолжает работать.
 
+### NPU
+
+При загрузке ядро включает NPU (шаг A), запускает его прошивку (шаг B) и выключает NPU, записывая каждый шаг в лог.
+Главные строки: `NPU IS ALIVE` (у NPU пошёл собственный таймер), `FIRMWARE READY: the NPU answered "BOOT"`
+(процессор NPU выполнил прошивку и ответил через свою очередь сообщений), в конце `NPU step A: PASS` и `NPU step B: PASS`.
+Повторить из менеджера: `0` → `N`. Полный лог: `/sys/npu/bringup.txt`, лог самой прошивки: `/sys/npu/fw-verbose.txt`
+и `/sys/npu/fw-critical.txt` (всё можно скопировать на флешку клавишей 5 и прислать).
+Если на этих строках машина зависла или перезагрузилась: добавь `npu=power` (только питание, без прошивки)
+или `npu=off` в `cmdline:` и пришли фото последней строки.
+
 ### UEFI
 
 - `/sys/efi/info.txt`: версия UEFI, производитель прошивки, время, Secure Boot, место в NVRAM.
@@ -145,6 +185,10 @@ NVMe с Windows не трогается: драйвера NVMe нет. Пише�
 | Чёрный экран после меню | подожди 10 с; затем выбери пункт `force 3840x2160` или `large text`; если не помогло, `Limine (fallback)`; сообщи, на каком пункте висит |
 | `Starting kernel...` и тишина / перезагрузка | выбери `Limine (fallback)`; если с ним работает, пришли фото: это ошибка Brooks Boot |
 | Паника на строке `EFI:` | добавь `efi=off` в `cmdline:` |
+| Зависание на строках `NPU` / `Power up:` | добавь `npu=off` в `cmdline:`, пришли фото последних строк |
+| `NPU step A: FAILED` | сфотографируй все строки `NPU`, особенно `TIMEOUT` / `FAILED` с адресом и значением регистра |
+| `NPU step B: FAILED` | пришли `/sys/npu/bringup.txt` и `/sys/npu/fw-verbose.txt` с флешки (или фото строк от `Firmware (step B):` до конца, особенно `MMU event`, `fw|` и `TIMEOUT`) |
+| `firmware vpu_37xx_v1.bin not found` | образ собран без прошивки: пересобери `make img` (скрипт `scripts/fetch-npu-fw.sh` скачивает её) или положи файл `vpu_37xx_v1.bin` в корень флешки, подключи её в менеджере (`U`) и запусти `0` → `N` |
 | После U диск не появился | сфотографируй строки `xhci` / `usb` в окне подключения; попробуй другой порт (USB-A и USB-C идут на разные контроллеры) |
 | NPU не найден (жёлтая строка) | сфотографируй список PCI: возможно, NPU выключен в BIOS (ищи пункт вроде `NPU`, `VPU`, `AI Boost`) или у него другой ID |
 | Мелкий текст | пункт `large text` или правка `cmdline:` в `\boot\limine\limine.conf` (например `font=16x32 scale=2`) |

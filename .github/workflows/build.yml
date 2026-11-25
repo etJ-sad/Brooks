@@ -17,6 +17,8 @@ jobs:
           sudo apt-get install -y clang lld make gdisk mtools zip qemu-system-x86 ovmf python3-pil ntfs-3g
       - name: Build kernel, disk image and ESP zip
         run: make -j"$(nproc)" img esp
+      - name: NPU driver against the register model (MMU walk, firmware copy, BOOT message)
+        run: ./tests/npu-model/run.sh
       - name: Boot test in QEMU + OVMF
         run: |
           make smoke
