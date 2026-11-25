@@ -52,4 +52,15 @@ void* map(uint64_t phys, size_t len, Cache cache) {
     return reinterpret_cast<void*>(va + off);
 }
 
+bool map_identity(uint64_t phys, size_t len, Cache cache, bool exec) {
+    uint64_t base = phys & ~(mm::PAGE - 1);
+    uint64_t end = (phys + len + mm::PAGE - 1) & ~(mm::PAGE - 1);
+    if (end > 0x0000800000000000ull) return false;
+    const bool nxe = cpu::rdmsr(0xC0000080) & (1u << 11);
+    uint64_t flags = P | RW | (nxe && !exec ? NX : 0) | (cache == Uncached ? (PCD | PWT) : 0);
+    for (uint64_t a = base; a < end; a += mm::PAGE)
+        if (!map_page(a, a, flags)) return false;
+    return true;
+}
+
 }  // namespace vmm

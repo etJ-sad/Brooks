@@ -25,6 +25,10 @@ bool looks_binary(const uint8_t* d, size_t n) {
 
 void view(fs::Node* f) {
     if (!f || f->dir) return;
+    if (!fs::ensure_data(f)) {
+        ui::message("Просмотр", "Не удалось прочитать файл с диска");
+        return;
+    }
     const uint8_t* d = f->data;
     size_t n = f->size;
     bool hex = looks_binary(d, n);

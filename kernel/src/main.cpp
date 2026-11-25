@@ -9,6 +9,7 @@
 #include <limine.h>
 
 #include "acpi/acpi.h"
+#include "efi/efi.h"
 #include "apps/apps.h"
 #include "arch/x86_64/apic.h"
 #include "arch/x86_64/cpu.h"
@@ -43,6 +44,10 @@ namespace {
     .id = LIMINE_FIRMWARE_TYPE_REQUEST, .revision = 0, .response = nullptr};
 [[gnu::used, gnu::section(".limine_requests")]] volatile limine_rsdp_request rsdp_req = {
     .id = LIMINE_RSDP_REQUEST, .revision = 0, .response = nullptr};
+[[gnu::used, gnu::section(".limine_requests")]] volatile limine_efi_system_table_request efi_st_req = {
+    .id = LIMINE_EFI_SYSTEM_TABLE_REQUEST, .revision = 0, .response = nullptr};
+[[gnu::used, gnu::section(".limine_requests")]] volatile limine_efi_memmap_request efi_mm_req = {
+    .id = LIMINE_EFI_MEMMAP_REQUEST, .revision = 0, .response = nullptr};
 [[gnu::used, gnu::section(".limine_requests")]] volatile limine_module_request module_req = {
     .id = LIMINE_MODULE_REQUEST, .revision = 0, .response = nullptr,
     .internal_module_count = 0, .internal_modules = nullptr};
@@ -228,6 +233,14 @@ extern "C" [[noreturn]] void kmain() {
     // Memory and firmware tables first: everything after this may allocate.
     mm::init(memmap_req.response, hhdm_req.response ? hhdm_req.response->offset : 0);
     bool have_acpi = acpi::init(rsdp_req.response ? uint64_t(rsdp_req.response->address) : 0);
+    // UEFI runtime services (time, NVRAM, reset). efi=off skips them.
+    {
+        char efi_opt[8] = "";
+        kstr::cmdline_get(cmdline, "efi", efi_opt, sizeof(efi_opt));
+        auto* em = efi_mm_req.response;
+        efi::init(efi_st_req.response ? uint64_t(efi_st_req.response->address) : 0, em ? em->memmap : nullptr,
+                  em ? em->memmap_size : 0, em ? em->desc_size : 0, memcmp(efi_opt, "off", 4) != 0);
+    }
 
     // ---- header (full width)
     con::set_color(con::White);
@@ -327,6 +340,15 @@ extern "C" [[noreturn]] void kmain() {
     }
     kprintf("IRQ:   LAPIC 0x%lx, %d IOAPIC, %d overrides; TSC %lu MHz (%s); timer %s\n", ai.lapic_addr, ai.n_ioapic,
             ai.n_iso, apic::tsc_hz() / 1000000, apic::tsc_source(), have_apic ? "100 Hz" : "OFF");
+    if (efi::available()) {
+        efi::Time et;
+        kprintf("EFI:   %s", efi::status());
+        if (efi::get_time(et))
+            kprintf("; time %04u-%02u-%02u %02u:%02u:%02u", et.year, et.month, et.day, et.hour, et.minute, et.second);
+        kprintf("\n");
+    } else {
+        kcprintf(con::Yellow, "EFI:   %s\n", efi::status());
+    }
     bool have_kbd = kbd::init();
     kprintf("Input: i8042 %s%s\n", have_kbd ? "found" : "NOT found",
             ai.fadt_8042_flag_valid ? (ai.has_8042 ? " (FADT: 8042 present)" : " (FADT: no 8042)") : "");
@@ -340,6 +362,7 @@ extern "C" [[noreturn]] void kmain() {
             files += fs::load_tar(m->address, m->size, "/");
         }
     }
+    efi::publish_files();
     fs::put_file("/sys/bootlog.txt", con::log_data(), con::log_size());
     kprintf("FS:    RAM file system, %d entries from initrd (%s)\n", files, size_str(fs::used_bytes(), sz));
     kprintf("RAM:   %s managed, %s free\n", size_str(mm::total_bytes(), sz), size_str(mm::free_bytes(), sz));
@@ -355,7 +378,11 @@ extern "C" [[noreturn]] void kmain() {
             if (kbd::poll(e) && (e.key == kbd::Enter || e.key == kbd::Esc || e.key == kbd::Char)) break;
             cpu::sti_hlt();
         }
-        apps::file_manager();
+        char usb[16] = "", usbrw[16] = "";
+        kstr::cmdline_get(cmdline, "usb", usb, sizeof(usb));
+        kstr::cmdline_get(cmdline, "usbrw", usbrw, sizeof(usbrw));
+        apps::g_usb_all_rw = memcmp(usbrw, "all", 4) == 0;
+        apps::file_manager(memcmp(usb, "auto", 5) == 0);
     }
     kcprintf(con::Red, "No interrupt controller: cannot run the file manager. Halted.\n");
     con::flush();

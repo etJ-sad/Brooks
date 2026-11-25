@@ -4,6 +4,7 @@
 # Usage: run-qemu.sh <image> [extra qemu args...]
 #   HEADLESS=1   no window (for CI/servers), screenshot via QEMU monitor if needed
 #   RES=3840x2160  emulate a 4K GOP mode (default 1920x1080)
+#   QEMU_EXTRA="..." extra QEMU arguments (e.g. a second USB disk)
 set -euo pipefail
 
 IMG="$1"; shift || true
@@ -39,4 +40,4 @@ exec qemu-system-x86_64 \
     -device qemu-xhci,id=xhci -device usb-storage,bus=xhci.0,drive=usbdisk,bootindex=0 \
     -device VGA,xres="$XRES",yres="$YRES",vgamem_mb=64 \
     -serial stdio -no-reboot \
-    "${DISPLAY_ARGS[@]}" "$@"
+    "${DISPLAY_ARGS[@]}" ${QEMU_EXTRA:-} "$@"

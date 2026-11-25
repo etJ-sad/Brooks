@@ -16,6 +16,26 @@ uint32_t read32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off) {
     return cpu::inl(0xCFC);
 }
 
+void write32(uint8_t bus, uint8_t dev, uint8_t fn, uint8_t off, uint32_t v) {
+    uint32_t addr = 0x80000000u | (uint32_t(bus) << 16) | (uint32_t(dev & 31) << 11) | (uint32_t(fn & 7) << 8) |
+                    (off & 0xFC);
+    cpu::outl(0xCF8, addr);
+    cpu::outl(0xCFC, v);
+}
+
+uint64_t bar_address(const Device& d, int bar) {
+    uint32_t lo = read32(d.bus, d.dev, d.fn, uint8_t(0x10 + bar * 4));
+    if (lo & 1) return 0;
+    uint64_t a = lo & ~0xFull;
+    if (((lo >> 1) & 3) == 2 && bar < 5) a |= uint64_t(read32(d.bus, d.dev, d.fn, uint8_t(0x14 + bar * 4))) << 32;
+    return a;
+}
+
+void enable_mmio_dma(const Device& d) {
+    uint32_t cmd = read32(d.bus, d.dev, d.fn, 0x04);
+    write32(d.bus, d.dev, d.fn, 0x04, (cmd & 0xFFFF) | 0x02 | 0x04);  // memory space + bus master
+}
+
 static void add(uint8_t bus, uint8_t dev, uint8_t fn, uint32_t id) {
     if (g_count >= MAX_DEVICES) return;
     Device& d = g_devs[g_count++];

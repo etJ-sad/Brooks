@@ -7,5 +7,6 @@
 namespace apps {
 void view(fs::Node* f);
 void edit(fs::Node* f);
-[[noreturn]] void file_manager();
+extern bool g_usb_all_rw;
+[[noreturn]] void file_manager(bool usb_auto);
 }  // namespace apps

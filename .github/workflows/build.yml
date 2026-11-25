@@ -14,7 +14,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang lld make gdisk mtools zip qemu-system-x86 ovmf python3-pil
+          sudo apt-get install -y clang lld make gdisk mtools zip qemu-system-x86 ovmf python3-pil ntfs-3g
       - name: Build kernel, disk image and ESP zip
         run: make -j"$(nproc)" img esp
       - name: Boot test in QEMU + OVMF
@@ -23,6 +23,13 @@ jobs:
           python3 -c "from PIL import Image; Image.open('build/screen.ppm').save('build/screen.png')"
       - name: File manager test (simulated key presses)
         run: python3 scripts/qemu-fm-test.py build/brooks.img build/fm-test
+      - name: UEFI runtime test (/sys/efi files, power-off via ResetSystem)
+        run: |
+          python3 scripts/qemu-efi-test.py build/brooks.img build/efi-test | tee build/efi-test.txt
+          grep -q "powered off: yes" build/efi-test.txt
+          grep -aq "^EFI:   UEFI" build/efi-test/serial.log
+      - name: NTFS test (read, fragmented file, large index, copy to FAT32)
+        run: python3 scripts/qemu-ntfs-test.py build/brooks.img build/ntfs-test
       - uses: actions/upload-artifact@v4
         with:
           name: boot-image
@@ -32,4 +39,6 @@ jobs:
             build/screen.png
             build/serial.log
             build/fm-test/*.png
+            build/efi-test/*.png
+            build/ntfs-test/*.png
           if-no-files-found: error

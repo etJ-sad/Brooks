@@ -4,11 +4,17 @@
 Первое железо: AURORA (Intel Core Ultra 9 285HX, Arrow Lake, NPU 3-го поколения).
 
 Сейчас:
-- **Фаза 0**: ядро грузится через Limine, выводит лог на экран (GOP framebuffer, читаемо в 4K)
+- **Свой загрузчик Brooks Boot** (`loader/`, `\EFI\BOOT\BOOTX64.EFI`): читает тот же `limine.conf`,
+  показывает меню и отдаёт ядру данные по протоколу Limine. Limine лежит рядом как запасной пункт меню.
+- **Фаза 0**: ядро выводит лог на экран (GOP framebuffer, читаемо в 4K)
   и в серийный порт: карту памяти, список PCI-устройств и найденный NPU (vendor 8086).
 - **Начало Фазы 1**: менеджер физической памяти, отображение MMIO, куча ядра; ACPI (MADT, FADT);
   LAPIC + IOAPIC, таймер 100 Гц; клавиатура i8042; файловая система в RAM из `initrd.tar`;
   встроенный двухпанельный **файловый менеджер** с просмотрщиком (текст/hex) и редактором.
+- **USB-накопители**: xHCI, USB mass storage (BOT/SCSI), разделы GPT/MBR. Файловые системы:
+  FAT32 и exFAT (чтение и запись), NTFS (только чтение).
+- **UEFI Runtime Services**: время прошивки, переменные NVRAM (`/sys/efi/`), выключение и перезагрузка
+  через UEFI, перезагрузка в настройки UEFI (BIOS).
   Пока всё это работает в ядре; с появлением процессов приложения переедут в `userspace/`.
 
 ![QEMU, 4K](docs/img/qemu-4k.png)
@@ -24,7 +30,8 @@
 
 ```sh
 sudo apt install clang lld make git gdisk mtools zip qemu-system-x86 ovmf
-make img        # build/brooks.img: GPT + FAT32 ESP, для dd / Rufus
+make img        # build/brooks.img: GPT + FAT32 ESP, для dd / Rufus (собирает и загрузчик)
+make loader     # только build/BOOTX64.EFI (Brooks Boot)
 make esp        # build/esp/ и build/brooks-esp.zip: те же файлы для копирования на FAT32-раздел
 make run        # QEMU + OVMF в окне, серийный лог в терминале
 RES=3840x2160 make run
@@ -43,6 +50,9 @@ Limine (готовые бинарники, ветка `v9.x-binary`, зафик�
 | `font` | `auto`, `8x16`, `16x32` | `auto`: 16x32 на экранах от 1440 строк (4K), иначе 8x16 |
 | `scale` | `1`, `2`, ... | целое увеличение шрифта; само уменьшается, если не влезает 80x25 |
 | `test` | `panic` | намеренно вызывает page fault, чтобы проверить экран паники |
+| `usb` | `auto` | подключить USB-накопители сразу при старте (иначе клавишей U) |
+| `usbrw` | `all` | разрешить запись на все накопители (по умолчанию только на загрузочный) |
+| `efi` | `off` | не трогать UEFI Runtime Services (если прошивка на них падает) |
 
 ## Файловый менеджер
 
@@ -58,11 +68,24 @@ Limine (готовые бинарники, ветка `v9.x-binary`, зафик�
 | 5 / F5, 6 / F6 | копировать, перенести / переименовать (в другую панель или по пути) |
 | 7 / F7, 9 / F9 | новая папка, новый файл |
 | 8 / F8 / Delete | удалить (с подтверждением) |
-| 0 / F10 | меню: перезагрузка, выключение (ACPI S5) |
+| U | подключить USB-накопители (появляются как `/usb0`, `/usb1`, ...) |
+| W | разрешить / запретить запись на накопитель текущей панели |
+| 0 / F10 | меню: U, перезагрузка, выключение (UEFI, затем ACPI S5), F: перезагрузка в настройки UEFI |
 
-Файлы живут в RAM: изменения пропадают после перезагрузки, пока нет драйвера USB-накопителя.
-Исходное содержимое берётся из `rootfs/` (упаковывается в `build/initrd.tar`).
-`python3 scripts/qemu-fm-test.py build/brooks.img build/fm-test` прогоняет менеджер в QEMU нажатиями клавиш со скриншотами.
+Корень (`/home`, `/docs`, ...) живёт в RAM и собирается из `rootfs/` (`build/initrd.tar`).
+Постоянные файлы: на USB-накопителях. Загрузочный диск (где лежит `limine.conf`) сразу доступен для записи,
+остальные только для чтения, пока не нажать W. NTFS всегда только для чтения.
+
+| Файловая система | Чтение | Запись |
+| --- | --- | --- |
+| FAT32 (длинные имена) | да | да |
+| exFAT | да | да |
+| NTFS | да (фрагментированные и разреженные файлы, большие папки) | нет; сжатые и зашифрованные файлы не читаются |
+
+`/sys/efi/info.txt`, `boot.txt`, `variables.txt`: версия UEFI, время, Secure Boot, NVRAM, пункты загрузки, все переменные.
+
+Тесты в QEMU (нажатия клавиш, скриншоты): `scripts/qemu-fm-test.py`, `qemu-usb-test.py`, `qemu-efi-test.py`,
+`qemu-ntfs-test.py` (нужен ntfs-3g), все с аргументами `build/brooks.img <папка>`.
 
 ## Устройство
 
@@ -80,11 +103,16 @@ kernel/
   src/acpi/                 RSDP/XSDT, MADT, FADT, перезагрузка, выключение через \_S5
   src/arch/x86_64/apic.cpp  LAPIC, IOAPIC, калибровка TSC, таймер
   src/drivers/keyboard.cpp  i8042, scancode set 1, раскладка US
-  src/fs/vfs.cpp            tmpfs + загрузка USTAR
+  src/fs/vfs.cpp            tmpfs + загрузка USTAR, точки монтирования дисков
+  src/fs/fat.cpp, exfat.cpp, ntfs.cpp, storage.cpp   файловые системы на USB-дисках
+  src/usb/                  xHCI (опрос, без хабов), USB mass storage
+  src/block/                блочные устройства, GPT/MBR
+  src/efi/                  UEFI Runtime Services (вызовы в физическом режиме, identity-map)
   src/apps/                 файловый менеджер, просмотрщик, редактор, UI-диалоги
+loader/src/                 Brooks Boot: UEFI-приложение (PE, clang + lld-link), протокол Limine
 rootfs/                     содержимое initrd.tar
-boot/limine.conf
-scripts/                    fetch-limine.sh, make-image.sh, run-qemu.sh, qemu-smoke.sh
+boot/limine.conf            меню загрузки (читают и Brooks Boot, и Limine)
+scripts/                    fetch-limine.sh, make-image.sh, run-qemu.sh, qemu-smoke.sh, qemu-*-test.py
 userspace/                  (с Фазы 1) сервисы user space, лицензия MIT
 ```
 
