@@ -1,4 +1,4 @@
-# AxonOS
+# Brooks
 
 Своя ОС с нуля для x86_64 UEFI, где CPU управляет, а тяжёлую работу с пикселями и данными делает NPU.
 Первое железо: AURORA (Intel Core Ultra 9 285HX, Arrow Lake, NPU 3-го поколения).
@@ -16,7 +16,7 @@
 ## Быстрый старт
 
 Готовый образ без сборки: вкладка **Actions** → последний зелёный запуск `build` → артефакт `boot-image`
-(внутри `axonos.img`, `axonos-esp.zip`, скриншот из QEMU).
+(внутри `brooks.img`, `brooks-esp.zip`, скриншот из QEMU).
 
 Запуск на AURORA: **[docs/aurora-boot.md](docs/aurora-boot.md)** (BitLocker, Secure Boot, запись на USB-SSD, что должно быть на экране).
 
@@ -24,8 +24,8 @@
 
 ```sh
 sudo apt install clang lld make git gdisk mtools zip qemu-system-x86 ovmf
-make img        # build/axonos.img: GPT + FAT32 ESP, для dd / Rufus
-make esp        # build/esp/ и build/axonos-esp.zip: те же файлы для копирования на FAT32-раздел
+make img        # build/brooks.img: GPT + FAT32 ESP, для dd / Rufus
+make esp        # build/esp/ и build/brooks-esp.zip: те же файлы для копирования на FAT32-раздел
 make run        # QEMU + OVMF в окне, серийный лог в терминале
 RES=3840x2160 make run
 make smoke      # загрузка без окна, проверка лога, скриншот build/screen.ppm
@@ -62,7 +62,7 @@ Limine (готовые бинарники, ветка `v9.x-binary`, зафик�
 
 Файлы живут в RAM: изменения пропадают после перезагрузки, пока нет драйвера USB-накопителя.
 Исходное содержимое берётся из `rootfs/` (упаковывается в `build/initrd.tar`).
-`python3 scripts/qemu-fm-test.py build/axonos.img build/fm-test` прогоняет менеджер в QEMU нажатиями клавиш со скриншотами.
+`python3 scripts/qemu-fm-test.py build/brooks.img build/fm-test` прогоняет менеджер в QEMU нажатиями клавиш со скриншотами.
 
 ## Устройство
 

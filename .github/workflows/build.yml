@@ -22,7 +22,7 @@ jobs:
           make smoke
           python3 -c "from PIL import Image; Image.open('build/screen.ppm').save('build/screen.png')"
       - name: File manager test (simulated key presses)
-        run: python3 scripts/qemu-fm-test.py build/axonos.img build/fm-test
+        run: python3 scripts/qemu-fm-test.py build/brooks.img build/fm-test
       - uses: actions/upload-artifact@v4
         with:
           name: boot-image

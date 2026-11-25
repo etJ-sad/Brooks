@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: GPL-2.0-only
-# AxonOS build.  Targets:
+# Brooks build.  Targets:
 #   make          kernel ELF  -> build/kernel.elf
-#   make img      bootable GPT/UEFI disk image -> build/axonos.img (for dd / Rufus)
+#   make img      bootable GPT/UEFI disk image -> build/brooks.img (for dd / Rufus)
 #   make esp      the same files as a folder + zip, to copy onto any FAT32 partition
 #   make run      boot the image in QEMU + OVMF (serial log on stdout)
 #   make smoke    headless QEMU boot test with screenshot (build/screen.ppm)
 #   make clean / make distclean
 
-OS_NAME    ?= AxonOS
+OS_NAME    ?= Brooks
 OS_VERSION ?= 0.0.1
-IMG_NAME   ?= axonos
+IMG_NAME   ?= brooks
 BUILD      := build
 
 CXX := clang++

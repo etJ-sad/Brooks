@@ -14,7 +14,7 @@ KERNEL="$1"
 INITRD="$2"
 OUT="$3"
 SIZE_MB="${IMG_SIZE_MB:-64}"
-LABEL="${IMG_LABEL:-AXONOS}"
+LABEL="${IMG_LABEL:-BROOKS}"
 
 for t in sgdisk mformat mmd mcopy; do
     command -v "$t" >/dev/null || { echo "missing tool: $t (apt install gdisk mtools)" >&2; exit 1; }

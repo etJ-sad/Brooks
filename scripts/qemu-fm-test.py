@@ -74,7 +74,7 @@ shot("view-todo"); key("esc", 2)
 key("backspace", 2)
 key("7", 1.5); typ("projects"); key("ret", 2); shot("mkdir")
 key("9", 1.5); typ("hello.txt"); key("ret", 2)                 # new file -> editor
-typ("Hello from AxonOS"); key("ret"); typ("line two"); shot("editor")
+typ("Hello from Brooks"); key("ret"); typ("line two"); shot("editor")
 key("f2", 2); key("esc", 2); shot("after-edit")
 key("5", 1.5); shot("copy-dialog"); key("ret", 2); shot("after-copy")
 key("tab", 1.5); shot("other-panel")
