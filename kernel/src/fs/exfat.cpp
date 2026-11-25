@@ -28,6 +28,7 @@ struct X {
     uint8_t* secbuf;
     uint64_t secbuf_lba;
     uint8_t* cbuf;
+    uint16_t* up;           // volume up-case table (65536 entries), nullptr = built-in fallback
     char label[48];
 };
 
@@ -211,7 +212,7 @@ uint16_t set_checksum(const uint8_t* set, int count) {
     return s;
 }
 
-uint16_t upcase(uint16_t c) {
+uint16_t upcase_builtin(uint16_t c) {
     if (c >= 'a' && c <= 'z') return uint16_t(c - 32);
     if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return uint16_t(c - 32);
     if (c >= 0x430 && c <= 0x44F) return uint16_t(c - 32);
@@ -219,10 +220,13 @@ uint16_t upcase(uint16_t c) {
     return c;
 }
 
-uint16_t name_hash(const uint16_t* n, int len) {
+uint16_t upcase(const X* x, uint16_t c) { return x->up ? x->up[c] : upcase_builtin(c); }
+
+// Name hash as other implementations compute it: over the volume's up-case table.
+uint16_t name_hash(const X* x, const uint16_t* n, int len) {
     uint16_t h = 0;
     for (int i = 0; i < len; i++) {
-        uint16_t c = upcase(n[i]);
+        uint16_t c = upcase(x, n[i]);
         h = uint16_t(((h & 1) ? 0x8000 : 0) + (h >> 1) + (c & 0xFF));
         h = uint16_t(((h & 1) ? 0x8000 : 0) + (h >> 1) + (c >> 8));
     }
@@ -330,7 +334,8 @@ bool load_dir(fs::Node* dir) {
         n->fs_a = first;
         n->fs_b = i;
         n->fs_c = uint64_t(count - 1) | (uint64_t(contig) << 8) | (dlen << 16);
-        if (!is_dir) n->size = size_t(valid);
+        if (!is_dir) n->size = size_t(dlen);  // bytes past ValidDataLength read as zeros
+        (void)valid;
         i += uint32_t(count - 1);
     }
 }
@@ -339,22 +344,34 @@ bool load_file(fs::Node* n) {
     X* x = M(n);
     Chain ch = dir_chain(n);  // same field layout for files
     size_t size = n->size;
+    // ValidDataLength: bytes after it are zeros, whatever the clusters hold.
+    size_t valid = size;
+    {
+        uint8_t set[19 * 32];
+        int count;
+        if (n->parent && read_set(x, dir_chain(n->parent), uint32_t(n->fs_b), set, count)) {
+            uint64_t v;
+            memcpy(&v, set + 32 + 8, 8);
+            if (v < valid) valid = size_t(v);
+        }
+    }
     auto* buf = static_cast<uint8_t*>(kmalloc(size ? size : 1));
     if (!buf) return false;
+    memset(buf + valid, 0, size - valid);
     size_t done = 0;
     uint32_t c = ch.first;
-    for (uint32_t i = 0; done < size && valid_clus(x, c); i++) {
+    for (uint32_t i = 0; done < valid && valid_clus(x, c); i++) {
         if (!read_clus(x, c, x->cbuf)) {
             kfree(buf);
             return false;
         }
-        size_t chunk = size - done < x->cbytes ? size - done : x->cbytes;
+        size_t chunk = valid - done < x->cbytes ? valid - done : x->cbytes;
         memcpy(buf + done, x->cbuf, chunk);
         done += chunk;
         c = chain_next(x, ch, c, i);
     }
     n->size = 0;
-    bool ok = done == size && fs::set_data(n, buf, size);
+    bool ok = done == valid && fs::set_data(n, buf, size);
     kfree(buf);
     return ok;
 }
@@ -399,6 +416,16 @@ fs::Error create(fs::Node* dir, fs::Node* n) {
     if (x->base.ro) return fs::ReadOnly;
     uint16_t name16[256];
     int nl = utf8_to_utf16(n->name, name16, 255);
+    // exFAT names are case-insensitive (by the up-case table): refuse "FOO" next to "foo".
+    for (fs::Node* c = dir->child; c; c = c->next) {
+        if (c == n) continue;
+        uint16_t o16[256];
+        int ol = utf8_to_utf16(c->name, o16, 255);
+        if (ol != nl) continue;
+        int k = 0;
+        while (k < nl && upcase(x, o16[k]) == upcase(x, name16[k])) k++;
+        if (k == nl) return fs::Exists;
+    }
     int nname = (nl + 14) / 15;
     int need = 2 + nname;
 
@@ -437,7 +464,7 @@ fs::Error create(fs::Node* dir, fs::Node* n) {
     st[0] = 0xC0;
     st[1] = 0x01;  // allocation possible, FAT chain
     st[3] = uint8_t(nl);
-    uint16_t h = name_hash(name16, nl);
+    uint16_t h = name_hash(x, name16, nl);
     st[4] = uint8_t(h);
     st[5] = uint8_t(h >> 8);
     memcpy(st + 8, &len, 8);
@@ -562,14 +589,17 @@ bool probe_mount(const blk::Volume& v, const char* mname, bool all_rw, char* inf
 
     // Root directory: allocation bitmap + label.
     Chain root{x->root, false, 0};
-    uint32_t bm_first = 0;
-    uint64_t bm_len = 0;
+    uint32_t bm_first = 0, up_first = 0;
+    uint64_t bm_len = 0, up_len = 0;
     for (uint32_t i = 0; i < 4096; i++) {
         uint8_t e[32];
         if (!entry_read(x, root, i, e) || e[0] == 0) break;
         if (e[0] == 0x81 && !(e[1] & 1)) {
             memcpy(&bm_first, e + 20, 4);
             memcpy(&bm_len, e + 24, 8);
+        } else if (e[0] == 0x82) {
+            memcpy(&up_first, e + 20, 4);
+            memcpy(&up_len, e + 24, 8);
         } else if (e[0] == 0x83) {
             uint16_t l16[11];
             int n = e[1] > 11 ? 11 : e[1];
@@ -588,6 +618,37 @@ bool probe_mount(const blk::Volume& v, const char* mname, bool all_rw, char* inf
         x->bm_clusters[i] = c;
         uint32_t nx = fat_get(x, c);
         c = (nx == 0) ? c + 1 : nx;  // some formatters leave the bitmap unchained (contiguous)
+    }
+    // Up-case table (used for name hashes and case-insensitive names). It is
+    // stored compressed: 0xFFFF, N means "the next N characters map to themselves".
+    if (valid_clus(x, up_first) && up_len >= 2 && up_len <= (256u << 10)) {
+        uint32_t ncl = uint32_t((up_len + x->cbytes - 1) / x->cbytes);
+        auto* raw = static_cast<uint8_t*>(kmalloc(size_t(ncl) * x->cbytes));
+        auto* up = static_cast<uint16_t*>(kmalloc(65536 * sizeof(uint16_t)));
+        bool ok = raw && up;
+        uint32_t uc = up_first;
+        for (uint32_t i = 0; ok && i < ncl; i++) {
+            ok = valid_clus(x, uc) && read_clus(x, uc, raw + size_t(i) * x->cbytes);
+            uint32_t nx = fat_get(x, uc);
+            uc = (nx == 0) ? uc + 1 : nx;  // usually contiguous without a FAT chain
+        }
+        if (ok) {
+            for (uint32_t k = 0; k < 65536; k++) up[k] = uint16_t(k);
+            uint32_t idx = 0;
+            for (uint64_t o = 0; o + 1 < up_len && idx < 65536; o += 2) {
+                uint16_t w = uint16_t(raw[o] | (raw[o + 1] << 8));
+                if (w == 0xFFFF && o + 3 < up_len) {
+                    o += 2;
+                    idx += uint16_t(raw[o] | (raw[o + 1] << 8));
+                } else {
+                    up[idx++] = w;
+                }
+            }
+            x->up = up;
+        } else {
+            kfree(up);
+        }
+        kfree(raw);
     }
     x->base.ro = !all_rw;
     x->base.can_write = true;

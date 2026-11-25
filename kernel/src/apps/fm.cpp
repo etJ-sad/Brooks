@@ -231,6 +231,16 @@ void do_copy_move(bool move) {
         set_msg(Red, "Неверный путь: %s", target);
         return;
     }
+    // A move that touches a disk is copy + delete: the source nodes are freed,
+    // so panels inside the moved folder go up to its parent first.
+    if (move && n->dir && (n->ops || d->ops))
+        for (Panel& q : g_p)
+            if (fs::is_ancestor(n, q.dir)) {
+                q.dir = n->parent;
+                q.sel = 0;
+                q.top = 0;
+                reload(q, nullptr);
+            }
     fs::Node* out = nullptr;
     fs::Error e = move ? fs::move(n, d, name) : fs::copy(n, d, name, &out);
     if (e != fs::Ok) {

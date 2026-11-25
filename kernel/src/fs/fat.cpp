@@ -345,9 +345,30 @@ bool make_short(Fat* f, uint32_t dc, const char* name, uint8_t out[11]) {
 
 fs::Error flush_err(Fat* f) { return fat_flush(f) ? fs::Ok : fs::IoError; }
 
+// FAT long names are case-insensitive. Fold ASCII, Latin-1, Greek and Cyrillic.
+uint16_t fold(uint16_t c) {
+    if (c >= 'a' && c <= 'z') return uint16_t(c - 32);
+    if (c >= 0xE0 && c <= 0xFE && c != 0xF7) return uint16_t(c - 32);
+    if (c >= 0x3B1 && c <= 0x3CB && c != 0x3C2) return uint16_t(c - 32);
+    if (c >= 0x430 && c <= 0x44F) return uint16_t(c - 32);
+    if (c >= 0x450 && c <= 0x45F) return uint16_t(c - 80);
+    return c;
+}
+
+bool same_name(const char* a, const char* b) {
+    uint16_t ua[260], ub[260];
+    int la = utf8_to_utf16(a, ua, 255), lb = utf8_to_utf16(b, ub, 255);
+    if (la != lb) return false;
+    for (int i = 0; i < la; i++)
+        if (fold(ua[i]) != fold(ub[i])) return false;
+    return true;
+}
+
 fs::Error create(fs::Node* dir, fs::Node* n) {
     Fat* f = F(dir);
     if (f->base.ro) return fs::ReadOnly;
+    for (fs::Node* c = dir->child; c; c = c->next)
+        if (c != n && same_name(c->name, n->name)) return fs::Exists;  // "FOO.TXT" next to "foo.txt"
     uint32_t dc = uint32_t(dir->fs_a);
     if (dc < 2) return fs::IoError;
     uint8_t short11[11];
