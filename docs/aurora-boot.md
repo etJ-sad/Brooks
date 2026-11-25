@@ -96,15 +96,24 @@ HHDM:  ...   ACPI RSDP: ...   Serial COM1: not present
 NPU FOUND: Arrow Lake NPU (NPU37xx) at 00:0b.0, id 8086:ad1d rev .., subsystem ....
   BAR0 MMIO 0x... 64-bit
   BAR4 MMIO 0x... 64-bit
-Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU). Halted, power off with the button.
+Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU)
+ACPI:  rev 2 OEM '...', NN tables: FACP APIC ...
+IRQ:   LAPIC 0xfee00000, 1 IOAPIC, ...; TSC .... MHz (CPUID 15h); timer 100 Hz
+Input: i8042 found ...
+FS:    RAM file system, 9 entries from initrd
+Enter: файловый менеджер (сам запустится через 15 с)
 ```
+
+Сфотографируй этот экран до нажатия Enter. Потом откроется файловый менеджер (клавиши в README, справка на `1`).
+Проверь, что работают стрелки, Enter, Tab и цифры. Лог загрузки можно потом листать в менеджере клавишей `2`.
 
 `Serial COM1: not present` на ноутбуке это нормально.
 
 **Сфотографируй весь экран** (желательно в нескольких кадрах, чтобы читались адреса) и пришли в тред:
 по этим данным (BAR NPU, список устройств, карта памяти) будет строиться Фаза 1 и драйвер NPU.
 
-Ядро ничего не пишет на диски, NVMe с Windows не трогается. Выключение: зажать кнопку питания на 5 секунд.
+Ядро ничего не пишет на диски, NVMe с Windows не трогается; файлы менеджера живут в RAM.
+Выключение: в менеджере `0` → `P` (ACPI), или зажать кнопку питания на 5 секунд.
 
 ## 7. Если что-то пошло не так
 
@@ -116,6 +125,8 @@ Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU). Halted, power off wi
 | NPU не найден (жёлтая строка) | сфотографируй список PCI: возможно, NPU выключен в BIOS (ищи пункт вроде `NPU`, `VPU`, `AI Boost`) или у него другой ID |
 | Мелкий текст | пункт `large text` или правка `cmdline:` в `\boot\limine\limine.conf` (например `font=16x32 scale=2`) |
 | Проверить экран паники | добавь `test=panic` в `cmdline:` |
+| Менеджер открылся, но клавиши не работают | сфотографируй строку `Input:` в логе. Встроенная клавиатура ноутбука обычно сидит на i8042; внешняя USB-клавиатура работает, только если в BIOS включена USB Legacy Support |
+| Клавиши F1..F10 не реагируют | используй цифры 1..0 (или Fn+F) |
 
 ## 8. Назад в Windows
 

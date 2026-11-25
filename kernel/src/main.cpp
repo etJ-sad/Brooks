@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: GPL-2.0-only
-// AxonOS kernel entry point - Phase 0: boot log on GOP + serial,
-// memory map, PCI scan, Intel NPU detection.
+// Kernel entry point: boot log on GOP + serial (memory map, PCI scan, Intel
+// NPU detection), then memory, ACPI, interrupts, keyboard, RAM file system
+// and the built-in file manager.
 #include <stddef.h>
 #include <stdint.h>
 
 #define LIMINE_API_REVISION 3
 #include <limine.h>
 
+#include "acpi/acpi.h"
+#include "apps/apps.h"
+#include "arch/x86_64/apic.h"
 #include "arch/x86_64/cpu.h"
 #include "arch/x86_64/idt.h"
+#include "drivers/keyboard.h"
 #include "drivers/serial.h"
+#include "fs/vfs.h"
+#include "mm/heap.h"
+#include "mm/pmm.h"
 #include "gfx/console.h"
 #include "lib/kprintf.h"
 #include "lib/string.h"
@@ -35,6 +43,9 @@ namespace {
     .id = LIMINE_FIRMWARE_TYPE_REQUEST, .revision = 0, .response = nullptr};
 [[gnu::used, gnu::section(".limine_requests")]] volatile limine_rsdp_request rsdp_req = {
     .id = LIMINE_RSDP_REQUEST, .revision = 0, .response = nullptr};
+[[gnu::used, gnu::section(".limine_requests")]] volatile limine_module_request module_req = {
+    .id = LIMINE_MODULE_REQUEST, .revision = 0, .response = nullptr,
+    .internal_module_count = 0, .internal_modules = nullptr};
 
 [[gnu::used, gnu::section(".limine_requests_start")]] volatile LIMINE_REQUESTS_START_MARKER;
 [[gnu::used, gnu::section(".limine_requests_end")]] volatile LIMINE_REQUESTS_END_MARKER;
@@ -214,6 +225,10 @@ extern "C" [[noreturn]] void kmain() {
         *reinterpret_cast<volatile uint64_t*>(0x0000700000000000ull) = 1;
     }
 
+    // Memory and firmware tables first: everything after this may allocate.
+    mm::init(memmap_req.response, hhdm_req.response ? hhdm_req.response->offset : 0);
+    bool have_acpi = acpi::init(rsdp_req.response ? uint64_t(rsdp_req.response->address) : 0);
+
     // ---- header (full width)
     con::set_color(con::White);
     kprintf("%s %s", OS_NAME, OS_VERSION);
@@ -232,7 +247,7 @@ extern "C" [[noreturn]] void kmain() {
     }
     kprintf("Boot:  %s %s, firmware %s, cmdline \"%s\"\n", bl_req.response ? bl_req.response->name : "?",
             bl_req.response ? bl_req.response->version : "?", fw, cmdline);
-    kprintf("CPU:   %s\n", brand);
+    kprintf("CPU:   %s, %d logical CPUs (ACPI MADT)\n", brand, acpi::info().n_cpus);
     if (have_fb) {
         const con::Info& ci = con::info();
         kprintf("GOP:   %lux%lu %ubpp pitch %lu at %p, %d framebuffer(s); console %dx%d font %dx%d x%d\n", ci.width,
@@ -246,7 +261,7 @@ extern "C" [[noreturn]] void kmain() {
 
     // ---- body: two panes side by side on wide screens, one pane otherwise
     const con::Info& ci = con::info();
-    const int footer_rows = 8;
+    const int footer_rows = 14;
     const int title_row = con::cursor_row() + 1;
     const int body_top = title_row + 1;
     const int body_h = ci.rows - body_top - footer_rows - 1;
@@ -289,12 +304,60 @@ extern "C" [[noreturn]] void kmain() {
     }
     bool gate = have_fb && memmap_req.response && pci::count() > 0;
     if (gate && g_npu_index >= 0)
-        kcprintf(con::Green, "Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU). Halted, power off with the button.\n");
+        kcprintf(con::Green, "Phase 0 gate: PASS (GOP log + memory map + PCI list + NPU)\n");
     else if (gate)
-        kcprintf(con::Yellow, "Phase 0 gate: log OK, NPU missing. Halted, power off with the button.\n");
+        kcprintf(con::Yellow, "Phase 0 gate: log OK, NPU missing\n");
     else
-        kcprintf(con::Red, "Phase 0 gate: FAIL (framebuffer/memmap/PCI missing). Halted.\n");
+        kcprintf(con::Red, "Phase 0 gate: FAIL (framebuffer/memmap/PCI missing)\n");
 
+    // ---- Phase 1 basics
+    char sz[32];
+    const acpi::Info& ai = acpi::info();
+    if (have_acpi) {
+        kprintf("ACPI:  rev %u OEM '%s', %d tables:", ai.revision, ai.oem, ai.n_tables);
+        for (int i = 0; i < ai.n_tables; i++) kprintf(" %s", ai.tables[i]);
+        kprintf("\n");
+    } else {
+        kcprintf(con::Red, "ACPI:  RSDP not usable\n");
+    }
+    bool have_apic = have_acpi && apic::init();
+    if (have_apic) {
+        apic::set_tick_hook(kbd::service);  // keyboard fallback if IRQ1 never fires
+        apic::start_timer(100);
+    }
+    kprintf("IRQ:   LAPIC 0x%lx, %d IOAPIC, %d overrides; TSC %lu MHz (%s); timer %s\n", ai.lapic_addr, ai.n_ioapic,
+            ai.n_iso, apic::tsc_hz() / 1000000, apic::tsc_source(), have_apic ? "100 Hz" : "OFF");
+    bool have_kbd = kbd::init();
+    kprintf("Input: i8042 %s%s\n", have_kbd ? "found" : "NOT found",
+            ai.fadt_8042_flag_valid ? (ai.has_8042 ? " (FADT: 8042 present)" : " (FADT: no 8042)") : "");
+    if (have_apic) cpu::sti();
+
+    fs::init();
+    int files = 0;
+    if (module_req.response) {
+        for (uint64_t i = 0; i < module_req.response->module_count; i++) {
+            limine_file* m = module_req.response->modules[i];
+            files += fs::load_tar(m->address, m->size, "/");
+        }
+    }
+    fs::put_file("/sys/bootlog.txt", con::log_data(), con::log_size());
+    kprintf("FS:    RAM file system, %d entries from initrd (%s)\n", files, size_str(fs::used_bytes(), sz));
+    kprintf("RAM:   %s managed, %s free\n", size_str(mm::total_bytes(), sz), size_str(mm::free_bytes(), sz));
+
+    // ---- hand over to the file manager
+    const int autostart_s = 15;
+    kcprintf(con::White, "Enter: файловый менеджер (сам запустится через %d с)\n", autostart_s);
+    con::flush();
+    if (have_apic) {
+        uint64_t until = apic::uptime_ms() + autostart_s * 1000ull;
+        while (apic::uptime_ms() < until) {
+            kbd::Event e;
+            if (kbd::poll(e) && (e.key == kbd::Enter || e.key == kbd::Esc || e.key == kbd::Char)) break;
+            cpu::sti_hlt();
+        }
+        apps::file_manager();
+    }
+    kcprintf(con::Red, "No interrupt controller: cannot run the file manager. Halted.\n");
     con::flush();
     cpu::halt_forever();
 }

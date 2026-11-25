@@ -46,14 +46,24 @@ FORCE:
 
 $(BUILD)/%.o: %.cpp $(BUILD)/gen/version.h
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+	@echo "  CXX  $<"
+	@$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BUILD)/%.S.o: %.S
 	@mkdir -p $(dir $@)
-	$(CC) $(ASFLAGS) -c $< -o $@
+	@echo "  AS   $<"
+	@$(CC) $(ASFLAGS) -c $< -o $@
 
 $(BUILD)/kernel.elf: $(OBJS) kernel/linker.ld
-	$(LD) $(LDFLAGS) $(OBJS) -o $@
+	@echo "  LD   $@"
+	@$(LD) $(LDFLAGS) $(OBJS) -o $@
+
+ROOTFS_FILES := $(shell find rootfs -type f 2>/dev/null)
+$(BUILD)/initrd.tar: $(ROOTFS_FILES)
+	@mkdir -p $(BUILD)
+	@echo "  TAR  $@"
+	@tar --format=ustar --owner=0 --group=0 --numeric-owner --mtime='2026-01-01 00:00Z' --sort=name \
+		-cf $@ -C rootfs .
 
 $(LIMINE_EFI):
 	./scripts/fetch-limine.sh
@@ -61,15 +71,16 @@ $(LIMINE_EFI):
 limine: $(LIMINE_EFI)
 
 img: $(BUILD)/$(IMG_NAME).img
-$(BUILD)/$(IMG_NAME).img: $(BUILD)/kernel.elf $(LIMINE_EFI) boot/limine.conf scripts/make-image.sh
-	./scripts/make-image.sh $(BUILD)/kernel.elf $@
+$(BUILD)/$(IMG_NAME).img: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) boot/limine.conf scripts/make-image.sh
+	./scripts/make-image.sh $(BUILD)/kernel.elf $(BUILD)/initrd.tar $@
 
-esp: $(BUILD)/kernel.elf $(LIMINE_EFI) boot/limine.conf
+esp: $(BUILD)/kernel.elf $(BUILD)/initrd.tar $(LIMINE_EFI) boot/limine.conf
 	rm -rf $(BUILD)/esp $(BUILD)/$(IMG_NAME)-esp.zip
 	mkdir -p $(BUILD)/esp/EFI/BOOT $(BUILD)/esp/boot/limine
 	cp $(LIMINE_EFI) $(BUILD)/esp/EFI/BOOT/BOOTX64.EFI
 	cp boot/limine.conf $(BUILD)/esp/boot/limine/limine.conf
 	cp $(BUILD)/kernel.elf $(BUILD)/esp/boot/kernel.elf
+	cp $(BUILD)/initrd.tar $(BUILD)/esp/boot/initrd.tar
 	cd $(BUILD)/esp && zip -qr ../$(IMG_NAME)-esp.zip EFI boot
 	@echo "ESP files: $(BUILD)/esp  zip: $(BUILD)/$(IMG_NAME)-esp.zip"
 

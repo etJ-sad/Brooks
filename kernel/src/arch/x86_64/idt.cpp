@@ -3,7 +3,7 @@
 #include "arch/x86_64/cpu.h"
 #include "lib/kprintf.h"
 
-extern "C" const uint64_t isr_stub_table[32];
+extern "C" const uint64_t isr_stub_table[256];
 
 namespace idt {
 namespace {
@@ -21,6 +21,7 @@ struct [[gnu::packed]] Idtr {
 };
 
 Gate g_idt[256];
+idt::Handler g_handlers[256];
 
 const char* const kNames[32] = {
     "#DE divide error", "#DB debug", "NMI", "#BP breakpoint", "#OF overflow", "#BR bound range",
@@ -37,13 +38,15 @@ const char* const kNames[32] = {
 void init() {
     uint16_t cs;
     asm volatile("mov %%cs, %0" : "=r"(cs));
-    for (int i = 0; i < 32; i++) {
+    for (int i = 0; i < 256; i++) {
         uint64_t a = isr_stub_table[i];
         g_idt[i] = {uint16_t(a), cs, 0, 0x8E, uint16_t(a >> 16), uint32_t(a >> 32), 0};
     }
     Idtr r{sizeof(g_idt) - 1, uint64_t(&g_idt)};
     asm volatile("lidt %0" ::"m"(r));
 }
+
+void set_handler(uint8_t vector, Handler h) { g_handlers[vector] = h; }
 
 }  // namespace idt
 
@@ -53,7 +56,11 @@ static void panic_header() {
     kprintf("\n  *** KERNEL PANIC ***\n\n");
 }
 
-extern "C" [[noreturn]] void isr_dispatch(idt::Frame* f) {
+extern "C" void isr_dispatch(idt::Frame* f) {
+    if (f->vector >= 32) {
+        if (idt::g_handlers[f->vector]) idt::g_handlers[f->vector](f);
+        return;
+    }
     panic_header();
     con::set_color(con::White);
     kprintf("  Exception %lu: %s   error=0x%lx\n\n", f->vector, f->vector < 32 ? idt::kNames[f->vector] : "?", f->error);

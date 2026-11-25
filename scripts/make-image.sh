@@ -4,13 +4,15 @@
 #   /EFI/BOOT/BOOTX64.EFI        Limine (removable-media path, no NVRAM entry needed)
 #   /boot/limine/limine.conf
 #   /boot/kernel.elf
-# Usage: make-image.sh <kernel.elf> <out.img>
+#   /boot/initrd.tar             initial RAM file system (USTAR)
+# Usage: make-image.sh <kernel.elf> <initrd.tar> <out.img>
 # The image can be written with dd or Rufus (DD mode) to a USB stick / USB-SSD.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 KERNEL="$1"
-OUT="$2"
+INITRD="$2"
+OUT="$3"
 SIZE_MB="${IMG_SIZE_MB:-64}"
 LABEL="${IMG_LABEL:-AXONOS}"
 
@@ -28,6 +30,7 @@ mmd -i "$PART" ::/EFI ::/EFI/BOOT ::/boot ::/boot/limine
 mcopy -i "$PART" third_party/limine/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 mcopy -i "$PART" boot/limine.conf ::/boot/limine/limine.conf
 mcopy -i "$PART" "$KERNEL" ::/boot/kernel.elf
+mcopy -i "$PART" "$INITRD" ::/boot/initrd.tar
 
 echo "Image: $OUT (${SIZE_MB} MiB, GPT + FAT32 ESP)"
 mdir -i "$PART" -/ :: | grep -E 'EFI|boot|BOOTX64|limine|kernel' || true

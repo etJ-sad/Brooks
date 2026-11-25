@@ -5,18 +5,38 @@
 
 namespace {
 
-void emit_padded(const char* s, size_t n, int width, bool left, char pad) {
-    int fill = width > int(n) ? width - int(n) : 0;
+struct Sink {
+    char* buf;  // nullptr -> console
+    size_t cap, len;
+    void put(char c) {
+        if (!buf) {
+            con::putc(c);
+            return;
+        }
+        if (len + 1 < cap) buf[len] = c;
+        len++;
+    }
+    void write(const char* s, size_t n) {
+        for (size_t i = 0; i < n; i++) put(s[i]);
+    }
+};
+
+void emit_padded(Sink& out, const char* s, size_t n, int width, bool left, char pad) {
+    // Width counts code points, so UTF-8 text pads correctly.
+    int cols = 0;
+    for (size_t i = 0; i < n; i++)
+        if ((uint8_t(s[i]) & 0xC0) != 0x80) cols++;
+    int fill = width > cols ? width - cols : 0;
     if (!left && pad == '0' && n > 0 && s[0] == '-') {  // keep sign before zeros
-        con::putc('-');
+        out.put('-');
         s++;
         n--;
     }
     if (!left)
-        for (int i = 0; i < fill; i++) con::putc(pad);
-    con::write(s, n);
+        for (int i = 0; i < fill; i++) out.put(pad);
+    out.write(s, n);
     if (left)
-        for (int i = 0; i < fill; i++) con::putc(' ');
+        for (int i = 0; i < fill; i++) out.put(' ');
 }
 
 size_t utoa(uint64_t v, unsigned base, bool upper, char* buf) {
@@ -33,10 +53,10 @@ size_t utoa(uint64_t v, unsigned base, bool upper, char* buf) {
 
 }  // namespace
 
-void kvprintf(const char* fmt, va_list ap) {
+static void format(Sink& out, const char* fmt, va_list ap) {
     for (const char* p = fmt; *p; p++) {
         if (*p != '%') {
-            con::putc(*p);
+            out.put(*p);
             continue;
         }
         p++;
@@ -58,12 +78,12 @@ void kvprintf(const char* fmt, va_list ap) {
         case 's': {
             const char* s = va_arg(ap, const char*);
             if (!s) s = "(null)";
-            emit_padded(s, strlen(s), width, left, ' ');
+            emit_padded(out, s, strlen(s), width, left, ' ');
             break;
         }
         case 'c':
             buf[0] = char(va_arg(ap, int));
-            emit_padded(buf, 1, width, left, ' ');
+            emit_padded(out, buf, 1, width, left, ' ');
             break;
         case 'd':
         case 'i': {
@@ -71,7 +91,7 @@ void kvprintf(const char* fmt, va_list ap) {
             uint64_t u = v < 0 ? uint64_t(-(v + 1)) + 1 : uint64_t(v);
             if (v < 0) buf[n++] = '-';
             n += utoa(u, 10, false, buf + n);
-            emit_padded(buf, n, width, left, pad);
+            emit_padded(out, buf, n, width, left, pad);
             break;
         }
         case 'u':
@@ -79,7 +99,7 @@ void kvprintf(const char* fmt, va_list ap) {
         case 'X': {
             uint64_t v = lng ? va_arg(ap, uint64_t) : va_arg(ap, unsigned);
             n = utoa(v, *p == 'u' ? 10 : 16, *p == 'X', buf);
-            emit_padded(buf, n, width, left, pad);
+            emit_padded(out, buf, n, width, left, pad);
             break;
         }
         case 'p': {
@@ -87,19 +107,39 @@ void kvprintf(const char* fmt, va_list ap) {
             buf[0] = '0';
             buf[1] = 'x';
             n = 2 + utoa(v, 16, false, buf + 2);
-            emit_padded(buf, n, width, left, ' ');
+            emit_padded(out, buf, n, width, left, ' ');
             break;
         }
         case '%':
-            con::putc('%');
+            out.put('%');
             break;
         case 0:
             return;
         default:
-            con::putc('%');
-            con::putc(*p);
+            out.put('%');
+            out.put(*p);
         }
     }
+}
+
+void kvprintf(const char* fmt, va_list ap) {
+    Sink s{nullptr, 0, 0};
+    format(s, fmt, ap);
+}
+
+size_t kvsnprintf(char* buf, size_t cap, const char* fmt, va_list ap) {
+    Sink s{buf, cap, 0};
+    format(s, fmt, ap);
+    if (cap) buf[s.len < cap ? s.len : cap - 1] = 0;
+    return s.len;
+}
+
+size_t ksnprintf(char* buf, size_t cap, const char* fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    size_t n = kvsnprintf(buf, cap, fmt, ap);
+    va_end(ap);
+    return n;
 }
 
 void kprintf(const char* fmt, ...) {

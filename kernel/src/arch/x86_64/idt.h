@@ -11,6 +11,10 @@ struct Frame {
     uint64_t rip, cs, rflags, rsp, ss;
 };
 
+using Handler = void (*)(Frame*);
+// Handler for vectors 32..255 (device interrupts). The handler sends EOI itself.
+void set_handler(uint8_t vector, Handler h);
+
 // Install handlers for CPU exceptions 0..31. Any exception shows a panic
 // screen with registers instead of a silent triple-fault reboot.
 void init();

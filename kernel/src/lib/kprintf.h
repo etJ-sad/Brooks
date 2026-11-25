@@ -8,3 +8,6 @@ void kvprintf(const char* fmt, va_list ap);
 __attribute__((format(printf, 1, 2))) void kprintf(const char* fmt, ...);
 // Same, but in the given colour; the previous colour is restored afterwards.
 __attribute__((format(printf, 2, 3))) void kcprintf(con::Color c, const char* fmt, ...);
+#include <stddef.h>
+size_t kvsnprintf(char* buf, size_t cap, const char* fmt, va_list ap);
+__attribute__((format(printf, 3, 4))) size_t ksnprintf(char* buf, size_t cap, const char* fmt, ...);
