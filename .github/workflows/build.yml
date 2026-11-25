@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang lld make gdisk mtools zip qemu-system-x86 ovmf python3-pil
+      - name: Build kernel, disk image and ESP zip
+        run: make -j"$(nproc)" img esp
+      - name: Boot test in QEMU + OVMF
+        run: |
+          make smoke
+          python3 -c "from PIL import Image; Image.open('build/screen.ppm').save('build/screen.png')"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: boot-image
+          path: |
+            build/*.img
+            build/*-esp.zip
+            build/screen.png
+            build/serial.log
+          if-no-files-found: error
